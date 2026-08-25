@@ -422,13 +422,17 @@
 
     tbody.innerHTML = list.map(function (k) {
       var decision = computeDecision(k);
-      var canSend = decision === 'Go' || decision === 'Maybe';
-      var alreadyAdded = canSend && contentAlreadyExistsForKeyword(k.phrase);
+      var verdict = k.serpVerdict || null;
+      var eligible = eligibleForContentPlanner(k);
+      var alreadyAdded = eligible && contentAlreadyExistsForKeyword(k.phrase);
       var sendBtn = '';
-      if (canSend) {
-        sendBtn = alreadyAdded
-          ? '<span class="badge badge-pending" title="A content item already targets this keyword">Already added</span>'
-          : '<button type="button" class="btn btn-small" data-action="send" data-id="' + k.id + '">Send to Content</button>';
+      if (alreadyAdded) {
+        sendBtn = '<span class="badge badge-pending" title="A content item already targets this keyword">Already added</span>';
+      } else if (eligible) {
+        sendBtn = '<button type="button" class="btn btn-small" data-action="send" data-id="' + k.id + '">Send to Content</button>';
+      } else if (decision === 'Go') {
+        var reason = verdict === 'skip' ? 'Marked skip in SERP review' : 'Complete SERP review first';
+        sendBtn = '<button type="button" class="btn btn-small" data-action="send" data-id="' + k.id + '" disabled title="' + reason + '">Send to Content</button>';
       }
       return (
         '<tr data-id="' + k.id + '">' +
@@ -581,7 +585,17 @@
     };
   }
 
+  // A keyword is eligible to be sent to the Content Planner only once it
+  // has an exact "Go" decision AND has been SERP-reviewed as "gap" or
+  // "doable" (not still unreviewed and not "skip"). This is the single
+  // combined rule used everywhere sending eligibility is checked.
+  function eligibleForContentPlanner(kw) {
+    var verdict = kw.serpVerdict || null;
+    return computeDecision(kw) === 'Go' && (verdict === 'gap' || verdict === 'doable');
+  }
+
   function sendKeywordToContentPlanner(kw) {
+    if (!eligibleForContentPlanner(kw)) return;
     if (contentAlreadyExistsForKeyword(kw.phrase)) {
       showToast('Already added to Content Planner.');
       return;
@@ -601,15 +615,14 @@
     return state.keywords.filter(function (k) { return !k.competition; });
   }
 
-  // Keywords eligible for the bulk "send to Content Planner" action: a
-  // Go decision (plus Maybe when includeMaybe is set) that doesn't already
-  // have a linked Content Planner entry — run through the exact same
-  // dedupe check the single-row "Send to Content" action uses.
-  function eligibleForBulkSend(includeMaybe) {
+  // Keywords eligible for the bulk "send to Content Planner" action: Go
+  // decision + SERP verdict gap/doable (per eligibleForContentPlanner),
+  // that doesn't already have a linked Content Planner entry — run
+  // through the exact same dedupe check the single-row "Send to Content"
+  // action uses.
+  function eligibleForBulkSend() {
     return state.keywords.filter(function (k) {
-      var d = computeDecision(k);
-      if (d !== 'Go' && !(includeMaybe && d === 'Maybe')) return false;
-      return !contentAlreadyExistsForKeyword(k.phrase);
+      return eligibleForContentPlanner(k) && !contentAlreadyExistsForKeyword(k.phrase);
     });
   }
 
@@ -619,10 +632,8 @@
     competitionBtn.disabled = blankCount === 0;
     competitionBtn.textContent = 'Set blank competition to Low' + (blankCount ? ' (' + blankCount + ')' : '');
 
-    // Enable whenever there's anything to send in either mode (Go-only or
-    // Go+Maybe) — the dialog's checkbox lets the user pick which.
-    var anyEligible = eligibleForBulkSend(true).length > 0;
-    document.getElementById('kw-bulk-send-btn').disabled = !anyEligible;
+    var eligibleCount = eligibleForBulkSend().length;
+    document.getElementById('kw-bulk-send-btn').disabled = eligibleCount === 0;
 
     var serpCount = serpReviewQueue().length;
     var serpBtn = document.getElementById('kw-bulk-serp-btn');
@@ -648,25 +659,21 @@
   }
 
   function updateBulkSendDialogBody() {
-    var includeMaybe = document.getElementById('bulk-send-include-maybe').checked;
-    var n = eligibleForBulkSend(includeMaybe).length;
-    var decisionLabel = includeMaybe ? 'Go or Maybe' : 'Go';
+    var n = eligibleForBulkSend().length;
     document.getElementById('bulk-send-dialog-body').textContent =
-      n + ' keyword' + (n === 1 ? '' : 's') + ' with a ' + decisionLabel +
-      ' decision (and no existing Content Planner entry) will be sent as new "Idea" items. Continue?';
+      n + ' keyword' + (n === 1 ? '' : 's') + ' with a Go decision and a SERP verdict of Gap or ' +
+      'Doable (and no existing Content Planner entry) will be sent as new "Idea" items. Continue?';
     document.getElementById('bulk-send-ok-btn').disabled = n === 0;
   }
 
   function openBulkSendDialog() {
-    if (eligibleForBulkSend(true).length === 0) return;
-    var checkbox = document.getElementById('bulk-send-include-maybe');
-    checkbox.checked = false;
+    if (eligibleForBulkSend().length === 0) return;
     updateBulkSendDialogBody();
     document.getElementById('bulk-send-dialog').showModal();
   }
 
-  function bulkSendGoToContentPlanner(includeMaybe) {
-    var eligible = eligibleForBulkSend(includeMaybe);
+  function bulkSendGoToContentPlanner() {
+    var eligible = eligibleForBulkSend();
     var sent = 0, skipped = 0;
     eligible.forEach(function (kw) {
       // Re-check as we go: two eligible keywords could share a phrase, in
@@ -687,15 +694,13 @@
     document.getElementById('kw-bulk-competition-btn').addEventListener('click', bulkSetBlankCompetitionToLow);
     document.getElementById('kw-bulk-send-btn').addEventListener('click', openBulkSendDialog);
 
-    document.getElementById('bulk-send-include-maybe').addEventListener('change', updateBulkSendDialogBody);
     document.getElementById('bulk-send-cancel-btn').addEventListener('click', function () {
       document.getElementById('bulk-send-dialog').close();
     });
     document.getElementById('bulk-send-form').addEventListener('submit', function (e) {
       e.preventDefault();
-      var includeMaybe = document.getElementById('bulk-send-include-maybe').checked;
       document.getElementById('bulk-send-dialog').close();
-      bulkSendGoToContentPlanner(includeMaybe);
+      bulkSendGoToContentPlanner();
     });
   }
 
