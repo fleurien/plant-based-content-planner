@@ -792,9 +792,9 @@
   }
 
   // Records a verdict (or a "review later" skip) for the current card, then
-  // advances the queue. When there's a next card, its Google search is
-  // opened here — inside this same click handler — so the popup-blocker's
-  // user-gesture requirement is satisfied.
+  // advances the queue. Does NOT auto-open a Google search for the next
+  // card — the user must click "Open Google search for this phrase" on the
+  // card themselves.
   function advanceSerpReview(currentId, verdict) {
     if (verdict) {
       var kw = state.keywords.find(function (k) { return k.id === currentId; });
@@ -806,8 +806,6 @@
     } else {
       serpReviewSkippedIds.push(currentId);
     }
-    var next = serpReviewRemaining()[0];
-    if (next) openGoogleSearchFor(next.phrase);
     renderSerpReview();
     renderKeywordsTab();
   }
@@ -821,8 +819,6 @@
       var queue = serpReviewQueue();
       if (queue.length === 0) return;
       serpReviewSkippedIds = [];
-      // Fired synchronously inside this click handler so the popup isn't blocked.
-      openGoogleSearchFor(queue[0].phrase);
       renderSerpReview();
       document.getElementById('serp-review-dialog').showModal();
     });
