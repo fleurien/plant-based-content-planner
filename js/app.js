@@ -12,6 +12,7 @@
   var LS_KEYWORDS = 'pbcp_keywords_v1';
   var LS_CONTENT = 'pbcp_content_v1';
   var LS_THEME = 'pbcp_theme_v1';
+  var LS_DELETED_PHRASES = 'pbcp_deleted_keyword_phrases_v1';
 
   var STATUS_STAGES = ['Idea', 'Tested', 'Photographed', 'Drafted', 'Published (v1)', 'Refined (v2+)'];
 
@@ -77,7 +78,11 @@
      --------------------------------------------------------- */
   var state = {
     keywords: [],
-    content: []
+    content: [],
+    // "Tombstone" list of keyword phrases the user has deliberately deleted
+    // from the Keyword Planner, kept separate from `keywords` so future CSV
+    // imports can skip re-adding them. Each entry: { phrase, normPhrase, deletedAt }.
+    deletedPhrases: []
   };
 
   function loadState() {
@@ -89,6 +94,10 @@
       var ct = localStorage.getItem(LS_CONTENT);
       state.content = ct ? JSON.parse(ct) : [];
     } catch (e) { state.content = []; }
+    try {
+      var dp = localStorage.getItem(LS_DELETED_PHRASES);
+      state.deletedPhrases = dp ? JSON.parse(dp) : [];
+    } catch (e) { state.deletedPhrases = []; }
   }
 
   function saveKeywords() {
@@ -96,6 +105,30 @@
   }
   function saveContent() {
     localStorage.setItem(LS_CONTENT, JSON.stringify(state.content));
+  }
+  function saveDeletedPhrases() {
+    localStorage.setItem(LS_DELETED_PHRASES, JSON.stringify(state.deletedPhrases));
+  }
+
+  // Same trim/lowercase normalization the CSV duplicate check and the
+  // content-planner "already added" check use elsewhere in this file.
+  function normalizePhrase(p) {
+    return (p || '').trim().toLowerCase();
+  }
+
+  // Records phrases into the deleted-phrases tombstone list (deduped by
+  // normalized phrase), so a future CSV import can skip them. Safe to call
+  // with phrases already present — those are silently skipped.
+  function addDeletedPhrases(phrases) {
+    var existingNorm = {};
+    state.deletedPhrases.forEach(function (d) { existingNorm[d.normPhrase] = true; });
+    phrases.forEach(function (p) {
+      var norm = normalizePhrase(p);
+      if (!norm || existingNorm[norm]) return;
+      state.deletedPhrases.push({ phrase: p.trim(), normPhrase: norm, deletedAt: todayISO() });
+      existingNorm[norm] = true;
+    });
+    saveDeletedPhrases();
   }
 
   /* ---------------------------------------------------------
@@ -301,6 +334,10 @@
 
   var kwFilters = { search: '', decision: 'all', sortVolume: 'none', serp: 'all' };
 
+  // Ids of currently selected keyword rows (bulk-select/delete). Ephemeral —
+  // intentionally not persisted to localStorage, cleared on delete.
+  var kwSelectedIds = {};
+
   function kwCountsSummary() {
     var counts = { Go: 0, Maybe: 0, Skip: 0, pending: 0 };
     state.keywords.forEach(function (k) {
@@ -387,8 +424,11 @@
     return state.content.some(function (c) { return (c.targetKeyword || '').trim().toLowerCase() === norm; });
   }
 
-  function renderKwTable() {
-    var tbody = document.getElementById('kw-tbody');
+  // Keywords currently visible under the active search/decision/SERP filters
+  // (and volume sort), i.e. exactly what's rendered in the table right now.
+  // Shared by renderKwTable and the "select all visible" checkbox so bulk
+  // selection always matches what the user can actually see.
+  function getVisibleKeywords() {
     var list = state.keywords.slice();
 
     // filter: search
@@ -417,6 +457,12 @@
         return kwFilters.sortVolume === 'asc' ? av - bv : bv - av;
       });
     }
+    return list;
+  }
+
+  function renderKwTable() {
+    var tbody = document.getElementById('kw-tbody');
+    var list = getVisibleKeywords();
 
     document.getElementById('kw-empty').hidden = state.keywords.length !== 0;
 
@@ -436,6 +482,9 @@
       }
       return (
         '<tr data-id="' + k.id + '">' +
+        '<td class="checkbox-cell"><input type="checkbox" class="row-checkbox" data-id="' + k.id + '"' +
+          (kwSelectedIds[k.id] ? ' checked' : '') +
+          ' aria-label="Select ' + escapeHtml(k.phrase) + '"></td>' +
         '<td class="phrase-cell">' + escapeHtml(k.phrase) + '</td>' +
         '<td>' + escapeHtml(k.note || '') + '</td>' +
         '<td>' + volumeDisplay(k) + '</td>' +
@@ -460,6 +509,8 @@
     refreshClusterDatalists();
     refreshKeywordDatalist();
     updateBulkActionButtons();
+    updateKwSelectionUI();
+    updateDeletedPhrasesButton();
   }
 
   /* ---------- Keyword add/edit dialog ---------- */
@@ -550,6 +601,7 @@
           var rowEl = document.querySelector('#kw-tbody tr[data-id="' + id + '"]');
           removeWithFade(rowEl, 'row-removing', function () {
             state.keywords = state.keywords.filter(function (k) { return k.id !== id; });
+            delete kwSelectedIds[id];
             saveKeywords();
             renderKeywordsTab();
             showToast('Keyword deleted.');
@@ -924,6 +976,125 @@
     });
   }
 
+  /* ---------- Keyword bulk select & delete ---------- */
+
+  // Updates the header "select all" checkbox's checked/indeterminate state
+  // based on the *currently visible* rows only, per spec (a narrowed filter
+  // never treats hidden rows as part of "all").
+  function updateKwSelectAllState() {
+    var box = document.getElementById('kw-select-all');
+    var visible = getVisibleKeywords();
+    if (visible.length === 0) { box.checked = false; box.indeterminate = false; return; }
+    var selectedCount = visible.filter(function (k) { return kwSelectedIds[k.id]; }).length;
+    box.checked = selectedCount === visible.length;
+    box.indeterminate = selectedCount > 0 && selectedCount < visible.length;
+  }
+
+  // Shows/hides the "Delete selected" row and keeps its count in sync.
+  // Called after every selection change and every table re-render.
+  function updateKwSelectionUI() {
+    var count = Object.keys(kwSelectedIds).filter(function (id) { return kwSelectedIds[id]; }).length;
+    document.getElementById('kw-selection-row').hidden = count === 0;
+    document.getElementById('kw-selection-count').textContent = count + ' selected';
+    document.getElementById('kw-bulk-delete-btn').textContent = 'Delete ' + count + ' selected';
+    updateKwSelectAllState();
+  }
+
+  function updateDeletedPhrasesButton() {
+    document.getElementById('kw-deleted-list-btn').textContent = 'Previously deleted (' + state.deletedPhrases.length + ')';
+  }
+
+  function bulkDeleteSelectedKeywords() {
+    var ids = Object.keys(kwSelectedIds).filter(function (id) { return kwSelectedIds[id]; });
+    if (ids.length === 0) return;
+    var idSet = {};
+    ids.forEach(function (id) { idSet[id] = true; });
+    var selected = state.keywords.filter(function (k) { return idSet[k.id]; });
+    var count = selected.length;
+    if (count === 0) return;
+
+    var message;
+    if (count <= 8) {
+      message = 'Delete ' + count + ' keyword' + (count === 1 ? '' : 's') + ' — "' +
+        selected.map(function (k) { return k.phrase; }).join('", "') +
+        '"? This cannot be undone, and these phrases will be excluded from future CSV imports.';
+    } else {
+      message = 'Delete ' + count + ' selected keywords? This cannot be undone, and these phrases will be excluded from future CSV imports.';
+    }
+
+    confirmAction(message, function () {
+      addDeletedPhrases(selected.map(function (k) { return k.phrase; }));
+      state.keywords = state.keywords.filter(function (k) { return !idSet[k.id]; });
+      saveKeywords();
+      kwSelectedIds = {};
+      renderKeywordsTab();
+      showToast(count + ' keyword' + (count === 1 ? '' : 's') + ' deleted.');
+    });
+  }
+
+  function initKwSelection() {
+    document.getElementById('kw-select-all').addEventListener('change', function (e) {
+      var checked = e.target.checked;
+      var visible = getVisibleKeywords();
+      visible.forEach(function (k) {
+        if (checked) kwSelectedIds[k.id] = true;
+        else delete kwSelectedIds[k.id];
+      });
+      renderKwTable();
+      updateKwSelectionUI();
+    });
+
+    document.getElementById('kw-tbody').addEventListener('change', function (e) {
+      var cb = e.target.closest('.row-checkbox');
+      if (!cb) return;
+      var id = cb.getAttribute('data-id');
+      if (cb.checked) kwSelectedIds[id] = true;
+      else delete kwSelectedIds[id];
+      updateKwSelectionUI();
+    });
+
+    document.getElementById('kw-bulk-delete-btn').addEventListener('click', bulkDeleteSelectedKeywords);
+  }
+
+  /* ---------- Previously deleted keywords dialog ---------- */
+
+  function renderDeletedList() {
+    var body = document.getElementById('deleted-list-body');
+    if (state.deletedPhrases.length === 0) {
+      body.innerHTML = '<p class="empty-state">No previously deleted keywords.</p>';
+      return;
+    }
+    var sorted = state.deletedPhrases.slice().sort(function (a, b) { return a.phrase.localeCompare(b.phrase); });
+    body.innerHTML = sorted.map(function (d) {
+      return (
+        '<div class="deleted-list-item">' +
+          '<span class="deleted-list-phrase">' + escapeHtml(d.phrase) + '</span>' +
+          '<button type="button" class="btn btn-small" data-action="restore" data-phrase="' + escapeHtml(d.normPhrase) + '">Remove from exclusion list</button>' +
+        '</div>'
+      );
+    }).join('');
+  }
+
+  function initDeletedPhrasesDialog() {
+    document.getElementById('kw-deleted-list-btn').addEventListener('click', function () {
+      renderDeletedList();
+      document.getElementById('deleted-list-dialog').showModal();
+    });
+    document.getElementById('deleted-list-close-btn').addEventListener('click', function () {
+      document.getElementById('deleted-list-dialog').close();
+    });
+    document.getElementById('deleted-list-body').addEventListener('click', function (e) {
+      var btn = e.target.closest('button[data-action="restore"]');
+      if (!btn) return;
+      var norm = btn.getAttribute('data-phrase');
+      state.deletedPhrases = state.deletedPhrases.filter(function (d) { return d.normPhrase !== norm; });
+      saveDeletedPhrases();
+      renderDeletedList();
+      updateDeletedPhrasesButton();
+      showToast('Removed from exclusion list.');
+    });
+  }
+
   /* ---------------------------------------------------------
      CSV import (Google Keyword Planner "Keyword Ideas" export)
      --------------------------------------------------------- */
@@ -1012,7 +1183,10 @@
     var existingPhrases = {};
     state.keywords.forEach(function (k) { existingPhrases[k.phrase.trim().toLowerCase()] = true; });
 
-    var imported = 0, skippedDup = 0, skippedBlank = 0;
+    var deletedPhrasesSet = {};
+    state.deletedPhrases.forEach(function (d) { deletedPhrasesSet[d.normPhrase] = true; });
+
+    var imported = 0, skippedDup = 0, skippedDeleted = 0, skippedBlank = 0;
 
     for (var r = headerIdx + 1; r < rows.length; r++) {
       var row = rows[r];
@@ -1023,6 +1197,7 @@
 
       var normPhrase = phrase.toLowerCase();
       if (existingPhrases[normPhrase]) { skippedDup++; continue; }
+      if (deletedPhrasesSet[normPhrase]) { skippedDeleted++; continue; }
 
       var volumeRaw = idxVolume !== -1 ? (row[idxVolume] || '').trim() : '';
       var volumeNum = parseVolumeToNumber(volumeRaw);
@@ -1045,7 +1220,7 @@
     }
 
     saveKeywords();
-    return { imported: imported, skippedDup: skippedDup, skippedBlank: skippedBlank };
+    return { imported: imported, skippedDup: skippedDup, skippedDeleted: skippedDeleted, skippedBlank: skippedBlank };
   }
 
   function initCsvImport() {
@@ -1065,6 +1240,7 @@
         } else {
           var parts = [result.imported + ' keyword' + (result.imported === 1 ? '' : 's') + ' imported'];
           if (result.skippedDup) parts.push(result.skippedDup + ' skipped as duplicate' + (result.skippedDup === 1 ? '' : 's'));
+          if (result.skippedDeleted) parts.push(result.skippedDeleted + ' skipped as previously deleted');
           if (result.skippedBlank) parts.push(result.skippedBlank + ' skipped as blank');
           summaryEl.textContent = parts.join(', ') + '.';
           summaryEl.hidden = false;
@@ -1081,6 +1257,10 @@
      =========================================================== */
 
   var contentFilters = { refreshOnly: false };
+
+  // Ids of currently selected content items (bulk-select/delete). Ephemeral,
+  // matching the same pattern as kwSelectedIds on the Keyword Planner tab.
+  var contentSelectedIds = {};
 
   function monthsSince(dateStr) {
     if (!dateStr) return null;
@@ -1147,6 +1327,11 @@
     return (
       '<div class="content-card' + (stale ? ' stale' : '') + '" data-id="' + item.id + '">' +
         '<div class="content-card-top">' +
+          '<div class="card-checkbox-wrap">' +
+            '<input type="checkbox" class="row-checkbox" data-id="' + item.id + '"' +
+              (contentSelectedIds[item.id] ? ' checked' : '') +
+              ' aria-label="Select ' + escapeHtml(item.title) + '">' +
+          '</div>' +
           '<div>' +
             '<div class="content-card-title">' + escapeHtml(item.title) +
               (stale ? '<span class="badge badge-stale">Needs refresh</span>' : '') +
@@ -1170,13 +1355,21 @@
     );
   }
 
-  function renderContentList() {
-    var container = document.getElementById('content-list');
+  // Content items currently visible under the active "Needs refresh only"
+  // filter, i.e. exactly what's rendered right now (regardless of which
+  // cluster accordion sections happen to be expanded/collapsed on screen).
+  // Shared by renderContentList and the "select all visible" checkbox.
+  function getVisibleContentItems() {
     var items = state.content.slice();
-
     if (contentFilters.refreshOnly) {
       items = items.filter(isStale);
     }
+    return items;
+  }
+
+  function renderContentList() {
+    var container = document.getElementById('content-list');
+    var items = getVisibleContentItems();
 
     document.getElementById('content-empty').hidden = state.content.length !== 0;
 
@@ -1216,6 +1409,7 @@
     renderContentList();
     refreshClusterDatalists();
     refreshKeywordDatalist();
+    updateContentSelectionUI();
   }
 
   /* ---------- Content add/edit dialog ---------- */
@@ -1324,6 +1518,7 @@
           var cardEl = document.querySelector('.content-card[data-id="' + id + '"]');
           removeWithFade(cardEl, 'card-removing', function () {
             state.content = state.content.filter(function (c) { return c.id !== id; });
+            delete contentSelectedIds[id];
             saveContent();
             renderContentTab();
             renderKeywordsTab();
@@ -1338,7 +1533,82 @@
     document.getElementById('content-filter-refresh').addEventListener('change', function (e) {
       contentFilters.refreshOnly = e.target.checked;
       renderContentList();
+      updateContentSelectionUI();
     });
+  }
+
+  /* ---------- Content bulk select & delete ---------- */
+  // Same pattern as the Keyword Planner's bulk select/delete, but plain
+  // deletes only — no tombstone list, since this tab isn't sourced from a
+  // re-importable CSV and there's nothing to remember.
+
+  function updateContentSelectAllState() {
+    var box = document.getElementById('content-select-all');
+    var visible = getVisibleContentItems();
+    if (visible.length === 0) { box.checked = false; box.indeterminate = false; return; }
+    var selectedCount = visible.filter(function (c) { return contentSelectedIds[c.id]; }).length;
+    box.checked = selectedCount === visible.length;
+    box.indeterminate = selectedCount > 0 && selectedCount < visible.length;
+  }
+
+  function updateContentSelectionUI() {
+    var count = Object.keys(contentSelectedIds).filter(function (id) { return contentSelectedIds[id]; }).length;
+    document.getElementById('content-selection-row').hidden = count === 0;
+    document.getElementById('content-selection-count').textContent = count + ' selected';
+    document.getElementById('content-bulk-delete-btn').textContent = 'Delete ' + count + ' selected';
+    updateContentSelectAllState();
+  }
+
+  function bulkDeleteSelectedContentItems() {
+    var ids = Object.keys(contentSelectedIds).filter(function (id) { return contentSelectedIds[id]; });
+    if (ids.length === 0) return;
+    var idSet = {};
+    ids.forEach(function (id) { idSet[id] = true; });
+    var selected = state.content.filter(function (c) { return idSet[c.id]; });
+    var count = selected.length;
+    if (count === 0) return;
+
+    var message;
+    if (count <= 8) {
+      message = 'Delete ' + count + ' content item' + (count === 1 ? '' : 's') + ' — "' +
+        selected.map(function (c) { return c.title; }).join('", "') +
+        '"? This cannot be undone.';
+    } else {
+      message = 'Delete ' + count + ' selected content items? This cannot be undone.';
+    }
+
+    confirmAction(message, function () {
+      state.content = state.content.filter(function (c) { return !idSet[c.id]; });
+      saveContent();
+      contentSelectedIds = {};
+      renderContentTab();
+      renderKeywordsTab(); // "already added" state may change
+      showToast(count + ' content item' + (count === 1 ? '' : 's') + ' deleted.');
+    });
+  }
+
+  function initContentSelection() {
+    document.getElementById('content-select-all').addEventListener('change', function (e) {
+      var checked = e.target.checked;
+      var visible = getVisibleContentItems();
+      visible.forEach(function (c) {
+        if (checked) contentSelectedIds[c.id] = true;
+        else delete contentSelectedIds[c.id];
+      });
+      renderContentList();
+      updateContentSelectionUI();
+    });
+
+    document.getElementById('content-list').addEventListener('change', function (e) {
+      var cb = e.target.closest('.row-checkbox');
+      if (!cb) return;
+      var id = cb.getAttribute('data-id');
+      if (cb.checked) contentSelectedIds[id] = true;
+      else delete contentSelectedIds[id];
+      updateContentSelectionUI();
+    });
+
+    document.getElementById('content-bulk-delete-btn').addEventListener('click', bulkDeleteSelectedContentItems);
   }
 
   /* ===========================================================
@@ -1350,7 +1620,8 @@
       exportedAt: new Date().toISOString(),
       version: 1,
       keywords: state.keywords,
-      content: state.content
+      content: state.content,
+      deletedPhrases: state.deletedPhrases
     };
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
@@ -1384,8 +1655,12 @@
         function () {
           state.keywords = Array.isArray(data.keywords) ? data.keywords : [];
           state.content = Array.isArray(data.content) ? data.content : [];
+          state.deletedPhrases = Array.isArray(data.deletedPhrases) ? data.deletedPhrases : [];
+          kwSelectedIds = {};
+          contentSelectedIds = {};
           saveKeywords();
           saveContent();
+          saveDeletedPhrases();
           renderKeywordsTab();
           renderContentTab();
           showToast('Backup imported.');
@@ -1417,6 +1692,8 @@
     initKwForm();
     initKwTableActions();
     initKwFilters();
+    initKwSelection();
+    initDeletedPhrasesDialog();
     initCsvImport();
     initBulkActions();
     initSerpReview();
@@ -1424,6 +1701,7 @@
     initContentForm();
     initContentListActions();
     initContentFilters();
+    initContentSelection();
     initJsonBackup();
     renderKeywordsTab();
     renderContentTab();

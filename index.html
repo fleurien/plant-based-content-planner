@@ -42,6 +42,7 @@
       <button type="button" class="btn btn-primary" id="kw-add-btn">+ Add keyword</button>
       <button type="button" class="btn" id="kw-import-btn">Import CSV</button>
       <input type="file" id="kw-csv-input" accept=".csv,text/csv" class="visually-hidden" aria-label="Import CSV file of keywords">
+      <button type="button" class="btn btn-ghost" id="kw-deleted-list-btn">Previously deleted (0)</button>
       <button type="button" class="btn" id="export-json-btn">Export data (JSON)</button>
       <button type="button" class="btn" id="import-json-btn">Import data (JSON)</button>
       <input type="file" id="json-input" accept=".json,application/json" class="visually-hidden" aria-label="Import backup JSON file">
@@ -53,6 +54,11 @@
     <button type="button" class="btn btn-bulk" id="kw-bulk-competition-btn">Set blank competition to Low</button>
     <button type="button" class="btn btn-bulk" id="kw-bulk-send-btn">Send SERP-approved Go keywords</button>
     <button type="button" class="btn btn-bulk" id="kw-bulk-serp-btn">Start SERP Review</button>
+  </div>
+
+  <div class="selection-actions-row" id="kw-selection-row" hidden>
+    <span class="selection-count" id="kw-selection-count">0 selected</span>
+    <button type="button" class="btn btn-danger" id="kw-bulk-delete-btn">Delete selected</button>
   </div>
 
   <div id="kw-import-summary" class="import-summary" role="status" hidden></div>
@@ -97,6 +103,7 @@
       <caption class="visually-hidden">Keyword list with volume, competition, and computed decision</caption>
       <thead>
         <tr>
+          <th scope="col" class="checkbox-col"><input type="checkbox" id="kw-select-all" aria-label="Select all visible keywords"></th>
           <th scope="col">Phrase</th>
           <th scope="col">Gap / rationale</th>
           <th scope="col">Volume</th>
@@ -122,10 +129,19 @@
     <div class="toolbar-buttons">
       <button type="button" class="btn btn-primary" id="content-add-btn">+ Add content item</button>
       <label class="checkbox-field toolbar-checkbox">
+        <input type="checkbox" id="content-select-all" aria-label="Select all visible content items">
+        <span>Select all visible</span>
+      </label>
+      <label class="checkbox-field toolbar-checkbox">
         <input type="checkbox" id="content-filter-refresh">
         <span>Needs refresh only</span>
       </label>
     </div>
+  </div>
+
+  <div class="selection-actions-row" id="content-selection-row" hidden>
+    <span class="selection-count" id="content-selection-count">0 selected</span>
+    <button type="button" class="btn btn-danger" id="content-bulk-delete-btn">Delete selected</button>
   </div>
 
   <div id="content-list" class="cluster-list"></div>
@@ -263,6 +279,16 @@
       <button type="submit" class="btn btn-danger" id="confirm-ok-btn">Delete</button>
     </div>
   </form>
+</dialog>
+
+<!-- ==================== PREVIOUSLY DELETED KEYWORDS DIALOG ==================== -->
+<dialog id="deleted-list-dialog" class="app-dialog app-dialog--small" aria-labelledby="deleted-list-title">
+  <h2 id="deleted-list-title">Previously deleted keywords</h2>
+  <p class="field-hint">These phrases are skipped automatically on future CSV imports. Removing one from this list does not add it back to your keywords — it only allows it to be re-imported.</p>
+  <div class="deleted-list-scroll" id="deleted-list-body"></div>
+  <div class="dialog-actions">
+    <button type="button" class="btn btn-primary" id="deleted-list-close-btn">Close</button>
+  </div>
 </dialog>
 
 <!-- ==================== BULK SEND TO CONTENT PLANNER DIALOG ==================== -->
