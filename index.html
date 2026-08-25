@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plant-Based Content Planner</title>
+<meta name="description" content="Keyword research and content planning tool for a plant-based recipe blog.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌿</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <h1 class="site-title">🌿 Plant-Based Content Planner</h1>
+    <div class="header-actions">
+      <button type="button" id="theme-toggle" class="btn btn-ghost" aria-label="Toggle color theme">
+        <span id="theme-icon" aria-hidden="true">🌓</span>
+        <span id="theme-label">System</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="Planner sections">
+  <button type="button" class="tab" id="tab-btn-keywords" role="tab" aria-selected="true" aria-controls="tab-keywords">Keyword Planner</button>
+  <button type="button" class="tab" id="tab-btn-content" role="tab" aria-selected="false" aria-controls="tab-content" tabindex="-1">Content Planner</button>
+</nav>
+
+<main id="main">
+
+<!-- ==================== KEYWORD PLANNER TAB ==================== -->
+<section id="tab-keywords" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-keywords" tabindex="0">
+
+  <div class="panel-toolbar">
+    <div class="counts-strip" id="kw-counts" aria-live="polite"></div>
+    <div class="toolbar-buttons">
+      <button type="button" class="btn btn-primary" id="kw-add-btn">+ Add keyword</button>
+      <button type="button" class="btn" id="kw-import-btn">Import CSV</button>
+      <input type="file" id="kw-csv-input" accept=".csv,text/csv" class="visually-hidden" aria-label="Import CSV file of keywords">
+      <button type="button" class="btn" id="export-json-btn">Export data (JSON)</button>
+      <button type="button" class="btn" id="import-json-btn">Import data (JSON)</button>
+      <input type="file" id="json-input" accept=".json,application/json" class="visually-hidden" aria-label="Import backup JSON file">
+    </div>
+  </div>
+
+  <div id="kw-import-summary" class="import-summary" role="status" hidden></div>
+
+  <div class="filter-row">
+    <label class="field-inline">
+      <span>Search</span>
+      <input type="search" id="kw-search" placeholder="Search phrases…">
+    </label>
+    <label class="field-inline">
+      <span>Decision</span>
+      <select id="kw-filter-decision">
+        <option value="all">All</option>
+        <option value="Go">Go</option>
+        <option value="Maybe">Maybe</option>
+        <option value="Skip">Skip</option>
+        <option value="—">Pending</option>
+      </select>
+    </label>
+    <label class="field-inline">
+      <span>Sort by volume</span>
+      <select id="kw-sort-volume">
+        <option value="none">Unsorted</option>
+        <option value="desc">High → Low</option>
+        <option value="asc">Low → High</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="table-scroll">
+    <table class="data-table" id="kw-table">
+      <caption class="visually-hidden">Keyword list with volume, competition, and computed decision</caption>
+      <thead>
+        <tr>
+          <th scope="col">Phrase</th>
+          <th scope="col">Gap / rationale</th>
+          <th scope="col">Volume</th>
+          <th scope="col">Competition</th>
+          <th scope="col">Quick?</th>
+          <th scope="col">Cluster</th>
+          <th scope="col">Decision</th>
+          <th scope="col">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="kw-tbody"></tbody>
+    </table>
+    <p class="empty-state" id="kw-empty" hidden>No keywords yet. Add one manually or import a CSV export from Google Keyword Planner.</p>
+  </div>
+</section>
+
+<!-- ==================== CONTENT PLANNER TAB ==================== -->
+<section id="tab-content" class="tab-panel" role="tabpanel" aria-labelledby="tab-btn-content" tabindex="0" hidden>
+
+  <div class="panel-toolbar">
+    <div class="counts-strip" id="content-counts" aria-live="polite"></div>
+    <div class="toolbar-buttons">
+      <button type="button" class="btn btn-primary" id="content-add-btn">+ Add content item</button>
+      <label class="checkbox-field toolbar-checkbox">
+        <input type="checkbox" id="content-filter-refresh">
+        <span>Needs refresh only</span>
+      </label>
+    </div>
+  </div>
+
+  <div id="content-list" class="cluster-list"></div>
+  <p class="empty-state" id="content-empty" hidden>No content items yet. Add one, or send a keyword over from the Keyword Planner tab.</p>
+</section>
+
+</main>
+
+<!-- ==================== KEYWORD ADD/EDIT DIALOG ==================== -->
+<dialog id="kw-dialog" class="app-dialog" aria-labelledby="kw-dialog-title">
+  <form method="dialog" id="kw-form" novalidate>
+    <h2 id="kw-dialog-title">Add keyword</h2>
+    <input type="hidden" id="kw-id">
+
+    <div class="field">
+      <label for="kw-phrase">Phrase <span class="req">*</span></label>
+      <input type="text" id="kw-phrase" required autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label for="kw-note">Gap / rationale note</label>
+      <textarea id="kw-note" rows="2"></textarea>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="kw-volume">Avg. monthly search volume</label>
+        <input type="number" id="kw-volume" min="0" step="1" inputmode="numeric" placeholder="e.g. 880">
+      </div>
+      <div class="field">
+        <label for="kw-competition">Competition</label>
+        <select id="kw-competition">
+          <option value="">— unset —</option>
+          <option value="Low">Low</option>
+          <option value="Medium">Medium</option>
+          <option value="High">High</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="kw-cluster">Cluster</label>
+        <input type="text" id="kw-cluster" list="cluster-suggestions" autocomplete="off">
+        <datalist id="cluster-suggestions"></datalist>
+      </div>
+      <div class="field checkbox-field-wrap">
+        <label class="checkbox-field">
+          <input type="checkbox" id="kw-quick">
+          <span>Quick to produce</span>
+        </label>
+      </div>
+    </div>
+
+    <p class="field-hint">Decision is calculated automatically from volume, competition, and the quick-to-produce flag.</p>
+
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="kw-cancel-btn">Cancel</button>
+      <button type="submit" class="btn btn-primary" id="kw-save-btn">Save keyword</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ==================== CONTENT ADD/EDIT DIALOG ==================== -->
+<dialog id="content-dialog" class="app-dialog" aria-labelledby="content-dialog-title">
+  <form method="dialog" id="content-form" novalidate>
+    <h2 id="content-dialog-title">Add content item</h2>
+    <input type="hidden" id="content-id">
+
+    <div class="field">
+      <label for="content-title">Title (working title) <span class="req">*</span></label>
+      <input type="text" id="content-title" required autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label for="content-keyword">Target keyword</label>
+      <input type="text" id="content-keyword" list="keyword-suggestions" autocomplete="off" placeholder="Pick from tracked keywords or type your own">
+      <datalist id="keyword-suggestions"></datalist>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="content-cluster">Cluster</label>
+        <input type="text" id="content-cluster" list="cluster-suggestions-content" autocomplete="off">
+        <datalist id="cluster-suggestions-content"></datalist>
+      </div>
+      <div class="field">
+        <label for="content-status">Status</label>
+        <select id="content-status">
+          <option value="Idea">Idea</option>
+          <option value="Tested">Tested</option>
+          <option value="Photographed">Photographed</option>
+          <option value="Drafted">Drafted</option>
+          <option value="Published (v1)">Published (v1)</option>
+          <option value="Refined (v2+)">Refined (v2+)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="content-target-date">Target publish date</label>
+        <input type="date" id="content-target-date">
+      </div>
+      <div class="field">
+        <label for="content-published-date">Published date</label>
+        <input type="date" id="content-published-date">
+      </div>
+      <div class="field">
+        <label for="content-updated-date">Last updated date</label>
+        <input type="date" id="content-updated-date">
+      </div>
+    </div>
+    <p class="field-hint">Published date auto-fills the first time status reaches “Published (v1)”. Last updated date auto-fills each time status reaches “Refined (v2+)”. Both can be overridden manually.</p>
+
+    <div class="field">
+      <label for="content-notes">Notes</label>
+      <textarea id="content-notes" rows="3"></textarea>
+    </div>
+
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="content-cancel-btn">Cancel</button>
+      <button type="submit" class="btn btn-primary" id="content-save-btn">Save content item</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ==================== CONFIRM DELETE DIALOG ==================== -->
+<dialog id="confirm-dialog" class="app-dialog app-dialog--small" aria-labelledby="confirm-dialog-title">
+  <form method="dialog" id="confirm-form">
+    <h2 id="confirm-dialog-title">Are you sure?</h2>
+    <p id="confirm-dialog-body">This action cannot be undone.</p>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="confirm-cancel-btn">Cancel</button>
+      <button type="submit" class="btn btn-danger" id="confirm-ok-btn">Delete</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<footer class="site-footer">
+  <p>Data is stored locally in this browser. Use “Export data (JSON)” regularly to back it up.</p>
+</footer>
+
+<script src="js/app.js"></script>
+</body>
+</html>
