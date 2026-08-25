@@ -401,6 +401,7 @@
     renderKwTable();
     refreshClusterDatalists();
     refreshKeywordDatalist();
+    updateBulkActionButtons();
   }
 
   /* ---------- Keyword add/edit dialog ---------- */
@@ -500,12 +501,11 @@
     });
   }
 
-  function sendKeywordToContentPlanner(kw) {
-    if (contentAlreadyExistsForKeyword(kw.phrase)) {
-      showToast('Already added to Content Planner.');
-      return;
-    }
-    var item = {
+  // Builds a new Content Planner item from a keyword, using the same
+  // pre-fill rules everywhere a keyword gets sent over (single-row action
+  // and the bulk "Send all Go" action both call this).
+  function buildContentItemFromKeyword(kw) {
+    return {
       id: uid(),
       title: kw.phrase.charAt(0).toUpperCase() + kw.phrase.slice(1),
       targetKeyword: kw.phrase,
@@ -517,11 +517,119 @@
       notes: '',
       createdAt: todayISO()
     };
-    state.content.push(item);
+  }
+
+  function sendKeywordToContentPlanner(kw) {
+    if (contentAlreadyExistsForKeyword(kw.phrase)) {
+      showToast('Already added to Content Planner.');
+      return;
+    }
+    state.content.push(buildContentItemFromKeyword(kw));
     saveContent();
     renderKeywordsTab();
     renderContentTab();
     showToast('Sent "' + kw.phrase + '" to Content Planner as a new idea.');
+  }
+
+  /* ---------- Bulk keyword actions ---------- */
+
+  // Keywords whose Competition is blank/unset (Google Keyword Planner
+  // commonly leaves this blank for informational/recipe queries).
+  function blankCompetitionKeywords() {
+    return state.keywords.filter(function (k) { return !k.competition; });
+  }
+
+  // Keywords eligible for the bulk "send to Content Planner" action: a
+  // Go decision (plus Maybe when includeMaybe is set) that doesn't already
+  // have a linked Content Planner entry — run through the exact same
+  // dedupe check the single-row "Send to Content" action uses.
+  function eligibleForBulkSend(includeMaybe) {
+    return state.keywords.filter(function (k) {
+      var d = computeDecision(k);
+      if (d !== 'Go' && !(includeMaybe && d === 'Maybe')) return false;
+      return !contentAlreadyExistsForKeyword(k.phrase);
+    });
+  }
+
+  function updateBulkActionButtons() {
+    var blankCount = blankCompetitionKeywords().length;
+    var competitionBtn = document.getElementById('kw-bulk-competition-btn');
+    competitionBtn.disabled = blankCount === 0;
+    competitionBtn.textContent = 'Set blank competition to Low' + (blankCount ? ' (' + blankCount + ')' : '');
+
+    // Enable whenever there's anything to send in either mode (Go-only or
+    // Go+Maybe) — the dialog's checkbox lets the user pick which.
+    var anyEligible = eligibleForBulkSend(true).length > 0;
+    document.getElementById('kw-bulk-send-btn').disabled = !anyEligible;
+  }
+
+  function bulkSetBlankCompetitionToLow() {
+    var count = blankCompetitionKeywords().length;
+    if (count === 0) return;
+    confirmAction(
+      count + ' keyword' + (count === 1 ? '' : 's') + ' currently have unset Competition. They will be set to "Low". Continue?',
+      function () {
+        var updated = 0;
+        state.keywords.forEach(function (k) {
+          if (!k.competition) { k.competition = 'Low'; updated++; }
+        });
+        saveKeywords();
+        renderKeywordsTab();
+        showToast(updated + ' keyword' + (updated === 1 ? '' : 's') + ' updated to Low competition.');
+      }
+    );
+  }
+
+  function updateBulkSendDialogBody() {
+    var includeMaybe = document.getElementById('bulk-send-include-maybe').checked;
+    var n = eligibleForBulkSend(includeMaybe).length;
+    var decisionLabel = includeMaybe ? 'Go or Maybe' : 'Go';
+    document.getElementById('bulk-send-dialog-body').textContent =
+      n + ' keyword' + (n === 1 ? '' : 's') + ' with a ' + decisionLabel +
+      ' decision (and no existing Content Planner entry) will be sent as new "Idea" items. Continue?';
+    document.getElementById('bulk-send-ok-btn').disabled = n === 0;
+  }
+
+  function openBulkSendDialog() {
+    if (eligibleForBulkSend(true).length === 0) return;
+    var checkbox = document.getElementById('bulk-send-include-maybe');
+    checkbox.checked = false;
+    updateBulkSendDialogBody();
+    document.getElementById('bulk-send-dialog').showModal();
+  }
+
+  function bulkSendGoToContentPlanner(includeMaybe) {
+    var eligible = eligibleForBulkSend(includeMaybe);
+    var sent = 0, skipped = 0;
+    eligible.forEach(function (kw) {
+      // Re-check as we go: two eligible keywords could share a phrase, in
+      // which case the first one sent makes the second a duplicate.
+      if (contentAlreadyExistsForKeyword(kw.phrase)) { skipped++; return; }
+      state.content.push(buildContentItemFromKeyword(kw));
+      sent++;
+    });
+    saveContent();
+    renderKeywordsTab();
+    renderContentTab();
+    var msg = sent + ' keyword' + (sent === 1 ? '' : 's') + ' sent to Content Planner.';
+    if (skipped) msg += ' ' + skipped + ' already existed and ' + (skipped === 1 ? 'was' : 'were') + ' skipped.';
+    showToast(msg);
+  }
+
+  function initBulkActions() {
+    document.getElementById('kw-bulk-competition-btn').addEventListener('click', bulkSetBlankCompetitionToLow);
+    document.getElementById('kw-bulk-send-btn').addEventListener('click', openBulkSendDialog);
+
+    document.getElementById('bulk-send-include-maybe').addEventListener('change', updateBulkSendDialogBody);
+    document.getElementById('bulk-send-cancel-btn').addEventListener('click', function () {
+      document.getElementById('bulk-send-dialog').close();
+    });
+    document.getElementById('bulk-send-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var includeMaybe = document.getElementById('bulk-send-include-maybe').checked;
+      document.getElementById('bulk-send-dialog').close();
+      bulkSendGoToContentPlanner(includeMaybe);
+    });
   }
 
   /* ---------- Keyword filters ---------- */
@@ -1032,6 +1140,7 @@
     initKwTableActions();
     initKwFilters();
     initCsvImport();
+    initBulkActions();
     initContentForm();
     initContentListActions();
     initContentFilters();

@@ -48,6 +48,12 @@
     </div>
   </div>
 
+  <div class="bulk-actions-row">
+    <span class="bulk-actions-label">Bulk actions</span>
+    <button type="button" class="btn btn-bulk" id="kw-bulk-competition-btn">Set blank competition to Low</button>
+    <button type="button" class="btn btn-bulk" id="kw-bulk-send-btn">Send all Go to Content Planner</button>
+  </div>
+
   <div id="kw-import-summary" class="import-summary" role="status" hidden></div>
 
   <div class="filter-row">
@@ -243,6 +249,22 @@
     <div class="dialog-actions">
       <button type="button" class="btn" id="confirm-cancel-btn">Cancel</button>
       <button type="submit" class="btn btn-danger" id="confirm-ok-btn">Delete</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ==================== BULK SEND TO CONTENT PLANNER DIALOG ==================== -->
+<dialog id="bulk-send-dialog" class="app-dialog app-dialog--small" aria-labelledby="bulk-send-dialog-title">
+  <form method="dialog" id="bulk-send-form">
+    <h2 id="bulk-send-dialog-title">Send keywords to Content Planner?</h2>
+    <p id="bulk-send-dialog-body">This action cannot be undone.</p>
+    <label class="checkbox-field">
+      <input type="checkbox" id="bulk-send-include-maybe">
+      <span>Also include Maybe decisions</span>
+    </label>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="bulk-send-cancel-btn">Cancel</button>
+      <button type="submit" class="btn btn-primary" id="bulk-send-ok-btn">Send</button>
     </div>
   </form>
 </dialog>

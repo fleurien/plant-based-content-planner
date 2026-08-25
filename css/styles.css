@@ -251,6 +251,8 @@ h2 { font-size: 1.3rem; }
   color: var(--danger-ink);
 }
 .btn-small { font-size: 0.78rem; padding: 0.3em 0.6em; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn:disabled:hover { background: var(--surface); }
 
 /* ---------- Tabs ---------- */
 .tabs {
@@ -304,6 +306,31 @@ main {
 }
 .toolbar-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .toolbar-checkbox { margin-left: 0.25rem; }
+
+.bulk-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  background: var(--bg-alt);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0.55rem 0.8rem;
+  margin-bottom: 1rem;
+}
+.bulk-actions-label {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+}
+.btn-bulk {
+  border-color: var(--accent);
+  background: var(--surface);
+  color: var(--ink);
+}
+.btn-bulk:hover:not(:disabled) { background: var(--maybe-bg); }
 
 .counts-strip {
   font-family: var(--font-mono);
