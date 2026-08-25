@@ -299,7 +299,7 @@
      KEYWORD PLANNER
      =========================================================== */
 
-  var kwFilters = { search: '', decision: 'all', sortVolume: 'none' };
+  var kwFilters = { search: '', decision: 'all', sortVolume: 'none', serp: 'all' };
 
   function kwCountsSummary() {
     var counts = { Go: 0, Maybe: 0, Skip: 0, pending: 0 };
@@ -328,6 +328,52 @@
     return '<span class="badge ' + cls + '">' + escapeHtml(d) + '</span>';
   }
 
+  /* ---------------------------------------------------------
+     SERP verdict helpers
+     --------------------------------------------------------- */
+  function serpVerdictLabel(v) {
+    if (v === 'gap') return 'Gap';
+    if (v === 'doable') return 'Doable';
+    if (v === 'skip') return 'Skip';
+    return 'Not checked';
+  }
+
+  function serpBadgeClass(v) {
+    if (v === 'gap') return 'badge-go';
+    if (v === 'doable') return 'badge-maybe';
+    if (v === 'skip') return 'badge-skip';
+    return 'badge-pending';
+  }
+
+  // Renders the SERP verdict as a clickable badge that opens the inline
+  // popover editor (see initSerpPopover). Works for both set and unset
+  // verdicts, matching the neutral "Not checked" state from the spec.
+  function serpBadgeHtml(kw) {
+    var v = kw.serpVerdict || null;
+    return '<button type="button" class="badge badge-btn ' + serpBadgeClass(v) + '" ' +
+      'data-action="serp-edit" data-id="' + kw.id + '" aria-haspopup="true" aria-expanded="false">' +
+      (v ? serpVerdictLabel(v) : 'Not checked') + '</button>';
+  }
+
+  // Keywords eligible for SERP review: a Go/Maybe decision with no verdict
+  // yet recorded. Sorted Go before Maybe, then by the same volume-estimate
+  // comparator the "Sort by volume" (High -> Low) control uses. Computed
+  // fresh on every call so a review session always reflects live state.
+  function serpReviewQueue() {
+    var list = state.keywords.filter(function (k) {
+      var d = computeDecision(k);
+      return (d === 'Go' || d === 'Maybe') && !k.serpVerdict;
+    });
+    list.sort(function (a, b) {
+      var da = computeDecision(a), db = computeDecision(b);
+      if (da !== db) return da === 'Go' ? -1 : 1;
+      var av = parseVolumeToNumber(a.volume); av = av === null ? -1 : av;
+      var bv = parseVolumeToNumber(b.volume); bv = bv === null ? -1 : bv;
+      return bv - av;
+    });
+    return list;
+  }
+
   function volumeDisplay(kw) {
     var num = parseVolumeToNumber(kw.volume);
     var bucket = bucketVolume(num);
@@ -353,6 +399,13 @@
     // filter: decision
     if (kwFilters.decision !== 'all') {
       list = list.filter(function (k) { return computeDecision(k) === kwFilters.decision; });
+    }
+    // filter: SERP verdict
+    if (kwFilters.serp !== 'all') {
+      list = list.filter(function (k) {
+        var v = k.serpVerdict || null;
+        return kwFilters.serp === 'none' ? !v : v === kwFilters.serp;
+      });
     }
     // sort: volume
     if (kwFilters.sortVolume !== 'none') {
@@ -386,6 +439,7 @@
         '<td>' + (k.quick ? 'Yes' : 'No') + '</td>' +
         '<td>' + escapeHtml(k.cluster || '') + '</td>' +
         '<td>' + decisionBadge(decision) + '</td>' +
+        '<td>' + serpBadgeHtml(k) + '</td>' +
         '<td><div class="row-actions">' +
           '<button type="button" class="btn btn-small" data-action="edit" data-id="' + k.id + '">Edit</button>' +
           '<button type="button" class="btn btn-small btn-danger" data-action="delete" data-id="' + k.id + '">Delete</button>' +
@@ -461,6 +515,8 @@
           competition: competition,
           cluster: cluster,
           quick: quick,
+          serpVerdict: null,
+          serpCheckedAt: null,
           createdAt: todayISO()
         });
         showToast('Keyword added.');
@@ -497,6 +553,12 @@
         });
       } else if (action === 'send') {
         sendKeywordToContentPlanner(kw);
+      } else if (action === 'serp-edit') {
+        if (serpPopoverTargetId === id && !document.getElementById('serp-popover').hidden) {
+          closeSerpPopover();
+        } else {
+          openSerpPopover(btn, id);
+        }
       }
     });
   }
@@ -561,6 +623,11 @@
     // Go+Maybe) — the dialog's checkbox lets the user pick which.
     var anyEligible = eligibleForBulkSend(true).length > 0;
     document.getElementById('kw-bulk-send-btn').disabled = !anyEligible;
+
+    var serpCount = serpReviewQueue().length;
+    var serpBtn = document.getElementById('kw-bulk-serp-btn');
+    serpBtn.disabled = serpCount === 0;
+    serpBtn.textContent = 'Start SERP Review' + (serpCount ? ' (' + serpCount + ')' : '');
   }
 
   function bulkSetBlankCompetitionToLow() {
@@ -632,6 +699,210 @@
     });
   }
 
+  /* ---------- SERP Review queue ---------- */
+
+  // Opens Google search results for a phrase in a new tab. Must always be
+  // called synchronously inside a user-gesture click handler, never from a
+  // render/effect callback afterward — popup blockers only allow
+  // window.open within that synchronous gesture window. Returns the new
+  // window reference (or null/undefined if blocked); callers should treat
+  // a falsy result as "silently fall back to the manual link," not an error.
+  function openGoogleSearchFor(phrase) {
+    try {
+      return window.open('https://www.google.com/search?q=' + encodeURIComponent(phrase), '_blank', 'noopener');
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Ids skipped ("Review later") during the *current* open review session.
+  // Not persisted anywhere — reset each time the dialog is opened/closed —
+  // so those keywords simply reappear next time serpReviewQueue() is read
+  // fresh, per spec.
+  var serpReviewSkippedIds = [];
+
+  function serpReviewRemaining() {
+    var full = serpReviewQueue();
+    return full.filter(function (k) { return serpReviewSkippedIds.indexOf(k.id) === -1; });
+  }
+
+  function renderSerpReview() {
+    var full = serpReviewQueue();
+    var remaining = full.filter(function (k) { return serpReviewSkippedIds.indexOf(k.id) === -1; });
+    var total = full.length;
+    var progressEl = document.getElementById('serp-review-progress');
+    var bodyEl = document.getElementById('serp-review-body');
+
+    if (total === 0) {
+      progressEl.textContent = 'Review complete';
+      bodyEl.innerHTML =
+        '<div class="serp-review-empty">' +
+          '<p>All caught up — every Go/Maybe keyword has a SERP verdict.</p>' +
+          '<button type="button" class="btn btn-primary" id="serp-review-done-btn">Close</button>' +
+        '</div>';
+      document.getElementById('serp-review-done-btn').addEventListener('click', closeSerpReview);
+      updateBulkActionButtons();
+      return;
+    }
+
+    // Everything left in the live queue has been "Review later"-skipped
+    // earlier in this same session — nothing new to show right now, but
+    // (per spec) those keywords are still unverdicted and will reappear
+    // next time the queue is computed fresh, e.g. next time Review opens.
+    if (remaining.length === 0) {
+      progressEl.textContent = 'Review paused';
+      bodyEl.innerHTML =
+        '<div class="serp-review-empty">' +
+          '<p>' + total + ' keyword' + (total === 1 ? '' : 's') + ' marked "Review later" — ' +
+          (total === 1 ? 'it' : 'they') + ' will reappear next time you open SERP Review.</p>' +
+          '<button type="button" class="btn btn-primary" id="serp-review-done-btn">Close</button>' +
+        '</div>';
+      document.getElementById('serp-review-done-btn').addEventListener('click', closeSerpReview);
+      return;
+    }
+
+    var current = remaining[0];
+    var index = total - remaining.length + 1;
+    progressEl.textContent = 'Reviewing ' + index + ' of ' + total;
+
+    var decision = computeDecision(current);
+
+    bodyEl.innerHTML =
+      '<div class="serp-review-card" tabindex="-1">' +
+        '<p class="serp-review-phrase">' + escapeHtml(current.phrase) + '</p>' +
+        '<div class="serp-review-meta">' +
+          '<span>Volume: ' + volumeDisplay(current) + '</span>' +
+          '<span>Competition: ' + escapeHtml(current.competition || '—') + '</span>' +
+          '<span>Decision: ' + decisionBadge(decision) + '</span>' +
+        '</div>' +
+        (current.note ? '<p class="serp-review-note">' + escapeHtml(current.note) + '</p>' : '') +
+        '<button type="button" class="btn serp-review-open-btn" data-action="open-search" data-id="' + current.id + '">Open Google search for this phrase</button>' +
+        '<div class="serp-review-verdicts">' +
+          '<button type="button" class="btn serp-verdict-btn serp-verdict-gap" data-action="verdict" data-verdict="gap" data-id="' + current.id + '">Genuine gap</button>' +
+          '<button type="button" class="btn serp-verdict-btn serp-verdict-doable" data-action="verdict" data-verdict="doable" data-id="' + current.id + '">Doable, need an angle</button>' +
+          '<button type="button" class="btn serp-verdict-btn serp-verdict-skip" data-action="verdict" data-verdict="skip" data-id="' + current.id + '">Skip, dominated by majors</button>' +
+        '</div>' +
+        '<div class="serp-review-footer">' +
+          '<button type="button" class="btn btn-ghost" data-action="skip-later" data-id="' + current.id + '">Review later</button>' +
+        '</div>' +
+      '</div>';
+
+    var cardEl = bodyEl.querySelector('.serp-review-card');
+    if (cardEl) cardEl.focus();
+  }
+
+  // Records a verdict (or a "review later" skip) for the current card, then
+  // advances the queue. When there's a next card, its Google search is
+  // opened here — inside this same click handler — so the popup-blocker's
+  // user-gesture requirement is satisfied.
+  function advanceSerpReview(currentId, verdict) {
+    if (verdict) {
+      var kw = state.keywords.find(function (k) { return k.id === currentId; });
+      if (kw) {
+        kw.serpVerdict = verdict;
+        kw.serpCheckedAt = todayISO();
+        saveKeywords();
+      }
+    } else {
+      serpReviewSkippedIds.push(currentId);
+    }
+    var next = serpReviewRemaining()[0];
+    if (next) openGoogleSearchFor(next.phrase);
+    renderSerpReview();
+    renderKeywordsTab();
+  }
+
+  function closeSerpReview() {
+    document.getElementById('serp-review-dialog').close();
+  }
+
+  function initSerpReview() {
+    document.getElementById('kw-bulk-serp-btn').addEventListener('click', function () {
+      var queue = serpReviewQueue();
+      if (queue.length === 0) return;
+      serpReviewSkippedIds = [];
+      // Fired synchronously inside this click handler so the popup isn't blocked.
+      openGoogleSearchFor(queue[0].phrase);
+      renderSerpReview();
+      document.getElementById('serp-review-dialog').showModal();
+    });
+
+    document.getElementById('serp-review-close-btn').addEventListener('click', closeSerpReview);
+    document.getElementById('serp-review-dialog').addEventListener('close', function () {
+      serpReviewSkippedIds = [];
+      renderKeywordsTab();
+    });
+
+    document.getElementById('serp-review-body').addEventListener('click', function (e) {
+      var btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      var action = btn.getAttribute('data-action');
+      var id = btn.getAttribute('data-id');
+
+      if (action === 'open-search') {
+        var kw = state.keywords.find(function (k) { return k.id === id; });
+        if (kw) openGoogleSearchFor(kw.phrase);
+      } else if (action === 'verdict') {
+        advanceSerpReview(id, btn.getAttribute('data-verdict'));
+      } else if (action === 'skip-later') {
+        advanceSerpReview(id, null);
+      }
+    });
+  }
+
+  /* ---------- SERP inline verdict popover (table badge) ---------- */
+  var serpPopoverTargetId = null;
+
+  function openSerpPopover(anchorBtn, id) {
+    var pop = document.getElementById('serp-popover');
+    serpPopoverTargetId = id;
+    var rect = anchorBtn.getBoundingClientRect();
+    pop.style.top = (window.scrollY + rect.bottom + 4) + 'px';
+    pop.style.left = (window.scrollX + rect.left) + 'px';
+    pop.hidden = false;
+    anchorBtn.setAttribute('aria-expanded', 'true');
+    var firstBtn = pop.querySelector('button');
+    if (firstBtn) firstBtn.focus();
+  }
+
+  function closeSerpPopover() {
+    var pop = document.getElementById('serp-popover');
+    if (pop.hidden) return;
+    pop.hidden = true;
+    if (serpPopoverTargetId) {
+      var anchor = document.querySelector('.badge-btn[data-id="' + serpPopoverTargetId + '"]');
+      if (anchor) anchor.setAttribute('aria-expanded', 'false');
+    }
+    serpPopoverTargetId = null;
+  }
+
+  function initSerpPopover() {
+    document.getElementById('serp-popover').addEventListener('click', function (e) {
+      var btn = e.target.closest('button[data-verdict]');
+      if (!btn || !serpPopoverTargetId) return;
+      var kw = state.keywords.find(function (k) { return k.id === serpPopoverTargetId; });
+      if (kw) {
+        kw.serpVerdict = btn.getAttribute('data-verdict');
+        kw.serpCheckedAt = todayISO();
+        saveKeywords();
+      }
+      closeSerpPopover();
+      renderKeywordsTab();
+      showToast('SERP verdict updated.');
+    });
+
+    document.addEventListener('click', function (e) {
+      var pop = document.getElementById('serp-popover');
+      if (pop.hidden) return;
+      if (pop.contains(e.target) || e.target.closest('[data-action="serp-edit"]')) return;
+      closeSerpPopover();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeSerpPopover();
+    });
+    window.addEventListener('scroll', function () { closeSerpPopover(); }, true);
+  }
+
   /* ---------- Keyword filters ---------- */
   function initKwFilters() {
     document.getElementById('kw-search').addEventListener('input', debounce(function (e) {
@@ -644,6 +915,10 @@
     });
     document.getElementById('kw-sort-volume').addEventListener('change', function (e) {
       kwFilters.sortVolume = e.target.value;
+      renderKwTable();
+    });
+    document.getElementById('kw-filter-serp').addEventListener('change', function (e) {
+      kwFilters.serp = e.target.value;
       renderKwTable();
     });
   }
@@ -760,6 +1035,8 @@
         competition: competition,
         cluster: '',
         quick: false,
+        serpVerdict: null,
+        serpCheckedAt: null,
         createdAt: todayISO()
       });
       existingPhrases[normPhrase] = true;
@@ -1141,6 +1418,8 @@
     initKwFilters();
     initCsvImport();
     initBulkActions();
+    initSerpReview();
+    initSerpPopover();
     initContentForm();
     initContentListActions();
     initContentFilters();

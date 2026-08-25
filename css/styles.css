@@ -429,6 +429,22 @@ main {
 .badge-pending { color: var(--pending); background: var(--pending-bg); border: 1px solid var(--pending); }
 .badge-stale { color: var(--skip); background: var(--skip-bg); border: 1px solid var(--skip); margin-left: 0.4em; }
 
+/* SERP verdict badge-as-button (inline editor trigger in the table) */
+.badge-btn {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.22em 0.65em;
+  border-radius: 999px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.badge-btn:hover { filter: brightness(0.96); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .badge-btn:hover { filter: brightness(1.15); }
+}
+:root[data-theme="dark"] .badge-btn:hover { filter: brightness(1.15); }
+
 .row-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 
 .empty-state {
@@ -554,6 +570,110 @@ main {
   border: 1px solid var(--border-strong);
 }
 
+/* ---------- SERP Review ---------- */
+.app-dialog--review { max-width: 640px; width: min(94vw, 640px); }
+
+.serp-review-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.6rem;
+}
+.serp-review-header h2 { margin: 0; }
+
+.serp-review-progress {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  margin: 0 0 1rem;
+}
+
+.serp-review-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-alt);
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .serp-review-card { animation: panel-fade-in 0.15s ease; }
+}
+.serp-review-phrase {
+  font-family: var(--font-mono);
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--ink);
+  word-break: break-word;
+}
+.serp-review-meta {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  align-items: center;
+}
+.serp-review-note {
+  font-size: 0.88rem;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6em 0.8em;
+  margin: 0;
+  white-space: pre-wrap;
+}
+.serp-review-open-btn { align-self: flex-start; }
+.serp-review-verdicts {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 0.8rem;
+}
+.serp-review-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.2rem;
+}
+.serp-review-empty {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--ink-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: center;
+}
+
+.serp-verdict-btn { font-weight: 600; }
+.serp-verdict-gap { color: var(--go); border-color: var(--go); }
+.serp-verdict-gap:hover { background: var(--go-bg); }
+.serp-verdict-doable { color: var(--maybe); border-color: var(--maybe); }
+.serp-verdict-doable:hover { background: var(--maybe-bg); }
+.serp-verdict-skip { color: var(--skip); border-color: var(--skip); }
+.serp-verdict-skip:hover { background: var(--skip-bg); }
+
+.serp-popover {
+  position: absolute;
+  z-index: 250;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 210px;
+}
+.serp-popover .btn { text-align: left; }
+.serp-popover[hidden] { display: none; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed;
@@ -597,4 +717,6 @@ main {
   .app-dialog { padding: 1rem; }
   .field-row { flex-direction: column; gap: 0.9rem; }
   .field-row .field { flex: 1 1 auto; }
+  .serp-review-header { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
+  .serp-review-verdicts { flex-direction: column; }
 }
