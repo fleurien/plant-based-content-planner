@@ -49,6 +49,29 @@
     };
   }
 
+  function prefersReducedMotion() {
+    return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  }
+
+  // Briefly highlights a freshly-added row/card, then removes the class.
+  function flashElement(el) {
+    if (!el) return;
+    if (prefersReducedMotion()) return;
+    el.classList.add('flash-add');
+    el.addEventListener('animationend', function handler() {
+      el.classList.remove('flash-add');
+      el.removeEventListener('animationend', handler);
+    });
+  }
+
+  // Fades an element out (unless reduced motion is on), then invokes the
+  // callback to actually remove it from state and re-render.
+  function removeWithFade(el, cls, cb) {
+    if (!el || prefersReducedMotion()) { cb(); return; }
+    el.classList.add(cls);
+    setTimeout(cb, 180);
+  }
+
   /* ---------------------------------------------------------
      State (loaded from / saved to localStorage)
      --------------------------------------------------------- */
@@ -260,11 +283,16 @@
     function cleanup() {
       okBtn.removeEventListener('click', onOk);
       cancelBtn.removeEventListener('click', onCancel);
+      dialog.removeEventListener('close', onDialogClose);
     }
     function onOk(e) { e.preventDefault(); cleanup(); dialog.close(); onConfirm(); }
     function onCancel(e) { e.preventDefault(); cleanup(); dialog.close(); }
+    // Covers dismissal via Escape (or any other native close) that bypasses
+    // the button handlers above, so listeners never leak onto the next call.
+    function onDialogClose() { cleanup(); }
     okBtn.addEventListener('click', onOk);
     cancelBtn.addEventListener('click', onCancel);
+    dialog.addEventListener('close', onDialogClose);
   }
 
   /* ===========================================================
@@ -350,7 +378,7 @@
           : '<button type="button" class="btn btn-small" data-action="send" data-id="' + k.id + '">Send to Content</button>';
       }
       return (
-        '<tr>' +
+        '<tr data-id="' + k.id + '">' +
         '<td class="phrase-cell">' + escapeHtml(k.phrase) + '</td>' +
         '<td>' + escapeHtml(k.note || '') + '</td>' +
         '<td>' + volumeDisplay(k) + '</td>' +
@@ -423,8 +451,9 @@
         }
         showToast('Keyword updated.');
       } else {
+        var newId = uid();
         state.keywords.push({
-          id: uid(),
+          id: newId,
           phrase: phrase,
           note: note,
           volume: volume,
@@ -438,6 +467,9 @@
       saveKeywords();
       document.getElementById('kw-dialog').close();
       renderKeywordsTab();
+      if (!id && typeof newId !== 'undefined') {
+        flashElement(document.querySelector('#kw-tbody tr[data-id="' + newId + '"]'));
+      }
     });
   }
 
@@ -454,10 +486,13 @@
         openKwDialog(kw);
       } else if (action === 'delete') {
         confirmAction('Delete the keyword "' + kw.phrase + '"? This cannot be undone.', function () {
-          state.keywords = state.keywords.filter(function (k) { return k.id !== id; });
-          saveKeywords();
-          renderKeywordsTab();
-          showToast('Keyword deleted.');
+          var rowEl = document.querySelector('#kw-tbody tr[data-id="' + id + '"]');
+          removeWithFade(rowEl, 'row-removing', function () {
+            state.keywords = state.keywords.filter(function (k) { return k.id !== id; });
+            saveKeywords();
+            renderKeywordsTab();
+            showToast('Keyword deleted.');
+          });
         });
       } else if (action === 'send') {
         sendKeywordToContentPlanner(kw);
@@ -862,8 +897,9 @@
         }
         showToast('Content item updated.');
       } else {
+        var newContentId = uid();
         state.content.push({
-          id: uid(),
+          id: newContentId,
           title: title,
           targetKeyword: targetKeyword,
           cluster: cluster,
@@ -880,6 +916,9 @@
       document.getElementById('content-dialog').close();
       renderContentTab();
       renderKeywordsTab(); // "already added" state may change
+      if (!id && typeof newContentId !== 'undefined') {
+        flashElement(document.querySelector('.content-card[data-id="' + newContentId + '"]'));
+      }
     });
   }
 
@@ -896,11 +935,14 @@
         openContentDialog(item);
       } else if (action === 'delete') {
         confirmAction('Delete the content item "' + item.title + '"? This cannot be undone.', function () {
-          state.content = state.content.filter(function (c) { return c.id !== id; });
-          saveContent();
-          renderContentTab();
-          renderKeywordsTab();
-          showToast('Content item deleted.');
+          var cardEl = document.querySelector('.content-card[data-id="' + id + '"]');
+          removeWithFade(cardEl, 'card-removing', function () {
+            state.content = state.content.filter(function (c) { return c.id !== id; });
+            saveContent();
+            renderContentTab();
+            renderKeywordsTab();
+            showToast('Content item deleted.');
+          });
         });
       }
     });
