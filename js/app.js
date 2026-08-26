@@ -184,14 +184,34 @@
     return bucketVolume(num);
   }
 
-  // Core decision rule table, per spec.
+  // Cache of keyword id -> decision, populated only while renderKeywordsTab()
+  // is actively rendering (see below). Repeated calls to computeDecision()
+  // within a single render pass (counts, table rows, bulk-action eligibility,
+  // SERP queue) then reuse the same computed value instead of recomputing it
+  // from scratch each time. Always null outside of that window, so a render's
+  // cache can never leak stale values into a later, unrelated read — every
+  // call outside an active render still computes fresh from current data.
+  var kwDecisionCache = null;
+
   function computeDecision(kw) {
+    if (kwDecisionCache && Object.prototype.hasOwnProperty.call(kwDecisionCache, kw.id)) {
+      return kwDecisionCache[kw.id];
+    }
+    return computeDecisionRaw(kw);
+  }
+
+  // Core decision rule table, per spec.
+  function computeDecisionRaw(kw) {
     var bucket = volumeBucketLabel(kw);
     var competition = kw.competition;
 
-    if (bucket === null || !competition) return '—';
-
+    // Volume bucket 0 (no data) is always Skip, regardless of competition —
+    // this must be checked before the "missing data" fallback below, since a
+    // bucket of '0' is a truthy string and competition may legitimately be
+    // blank/unset at the same time.
+    if (bucket === null) return '—';
     if (bucket === '0') return 'Skip';
+    if (!competition) return '—';
 
     if (bucket === '10-100') {
       if (competition === 'Low' || competition === 'Medium') {
@@ -340,15 +360,158 @@
     dialog.addEventListener('close', onDialogClose);
   }
 
+  /* ---------------------------------------------------------
+     Shared bulk-select / bulk-delete controller
+     Both tabs need identical "select all visible / select row / show
+     selection count / bulk delete" behavior. This used to be hand-copied
+     per tab, which is exactly how the Keyword tab's header checkbox fell
+     out of sync with its filters (see Bug 1 in the audit) — one copy got
+     touched, the other didn't. Now both tabs share one implementation,
+     parameterized by which dataset and DOM ids they operate on, so a fix
+     here can't drift between tabs again.
+     --------------------------------------------------------- */
+  // config: {
+  //   selectAllId, containerId, selectionRowId, selectionCountId, bulkDeleteBtnId,
+  //   getVisibleItems: () => items currently visible (id-bearing objects) —
+  //     drives both "select all visible" and the header checkbox state,
+  //   getAllItems: () => the full backing array (to resolve selected ids),
+  //   getItemLabel: (item) => string used in the delete-confirmation message,
+  //   nounSingular, nounPlural: strings for delete-confirmation wording,
+  //   extraDeleteWarning: string appended after "This cannot be undone" (the
+  //     Keyword tab's CSV-reimport-exclusion note; the Content tab passes ''
+  //     since it isn't tombstoned),
+  //   performDelete: (idSet, selectedItems) => mutates + saves backing state,
+  //   afterDelete: (count) => re-renders the tab(s) and shows a toast,
+  //   renderVisibleList: () => re-renders just the rows/cards (used when the
+  //     "select all" checkbox toggles, to redraw the now-(un)checked boxes)
+  // }
+  function createBulkSelection(config) {
+    var selected = {};
+
+    function selectedIdList() {
+      return Object.keys(selected).filter(function (id) { return selected[id]; });
+    }
+
+    function isSelected(id) { return !!selected[id]; }
+
+    function unselect(id) { delete selected[id]; }
+
+    function getSelectedItems() {
+      var idSet = {};
+      selectedIdList().forEach(function (id) { idSet[id] = true; });
+      return config.getAllItems().filter(function (item) { return idSet[item.id]; });
+    }
+
+    // Updates the header "select all" checkbox's checked/indeterminate state
+    // based on the *currently visible* rows only, per spec (a narrowed
+    // filter never treats hidden rows as part of "all"). Called after every
+    // selection change AND every filter-triggered re-render, so it can never
+    // go stale the way the Keyword tab's copy used to.
+    function updateSelectAllState() {
+      var box = document.getElementById(config.selectAllId);
+      var visible = config.getVisibleItems();
+      if (visible.length === 0) { box.checked = false; box.indeterminate = false; return; }
+      var selectedCount = visible.filter(function (item) { return selected[item.id]; }).length;
+      box.checked = selectedCount === visible.length;
+      box.indeterminate = selectedCount > 0 && selectedCount < visible.length;
+    }
+
+    function updateSelectionUI() {
+      var count = selectedIdList().length;
+      document.getElementById(config.selectionRowId).hidden = count === 0;
+      document.getElementById(config.selectionCountId).textContent = count + ' selected';
+      document.getElementById(config.bulkDeleteBtnId).textContent = 'Delete ' + count + ' selected';
+      updateSelectAllState();
+    }
+
+    function clear() { selected = {}; }
+
+    function bulkDelete() {
+      var chosen = getSelectedItems();
+      var count = chosen.length;
+      if (count === 0) return;
+
+      var message;
+      if (count <= 8) {
+        message = 'Delete ' + count + ' ' + (count === 1 ? config.nounSingular : config.nounPlural) + ' — "' +
+          chosen.map(config.getItemLabel).join('", "') +
+          '"? This cannot be undone' + (config.extraDeleteWarning || '') + '.';
+      } else {
+        message = 'Delete ' + count + ' selected ' + config.nounPlural + '? This cannot be undone' + (config.extraDeleteWarning || '') + '.';
+      }
+
+      confirmAction(message, function () {
+        var idSet = {};
+        chosen.forEach(function (item) { idSet[item.id] = true; });
+        config.performDelete(idSet, chosen);
+        clear();
+        config.afterDelete(count);
+      }, { label: 'Delete', danger: true });
+    }
+
+    function init() {
+      document.getElementById(config.selectAllId).addEventListener('change', function (e) {
+        var checked = e.target.checked;
+        config.getVisibleItems().forEach(function (item) {
+          if (checked) selected[item.id] = true;
+          else delete selected[item.id];
+        });
+        config.renderVisibleList();
+        updateSelectionUI();
+      });
+
+      document.getElementById(config.containerId).addEventListener('change', function (e) {
+        var cb = e.target.closest('.row-checkbox');
+        if (!cb) return;
+        var id = cb.getAttribute('data-id');
+        if (cb.checked) selected[id] = true;
+        else delete selected[id];
+        updateSelectionUI();
+      });
+
+      document.getElementById(config.bulkDeleteBtnId).addEventListener('click', bulkDelete);
+    }
+
+    return {
+      init: init,
+      isSelected: isSelected,
+      unselect: unselect,
+      getSelectedItems: getSelectedItems,
+      updateSelectionUI: updateSelectionUI,
+      updateSelectAllState: updateSelectAllState,
+      clear: clear
+    };
+  }
+
   /* ===========================================================
      KEYWORD PLANNER
      =========================================================== */
 
   var kwFilters = { search: '', decision: 'all', sortVolume: 'none', serp: 'all' };
 
-  // Ids of currently selected keyword rows (bulk-select/delete). Ephemeral —
-  // intentionally not persisted to localStorage, cleared on delete.
-  var kwSelectedIds = {};
+  var kwSelection = createBulkSelection({
+    selectAllId: 'kw-select-all',
+    containerId: 'kw-tbody',
+    selectionRowId: 'kw-selection-row',
+    selectionCountId: 'kw-selection-count',
+    bulkDeleteBtnId: 'kw-bulk-delete-btn',
+    getVisibleItems: function () { return getVisibleKeywords(); },
+    getAllItems: function () { return state.keywords; },
+    getItemLabel: function (k) { return k.phrase; },
+    nounSingular: 'keyword',
+    nounPlural: 'keywords',
+    extraDeleteWarning: ', and these phrases will be excluded from future CSV imports',
+    performDelete: function (idSet, chosen) {
+      addDeletedPhrases(chosen.map(function (k) { return k.phrase; }));
+      state.keywords = state.keywords.filter(function (k) { return !idSet[k.id]; });
+      saveKeywords();
+    },
+    afterDelete: function (count) {
+      renderKeywordsTab();
+      showToast(count + ' keyword' + (count === 1 ? '' : 's') + ' deleted.');
+    },
+    renderVisibleList: function () { renderKwTable(); }
+  });
 
   function kwCountsSummary() {
     var counts = { Go: 0, Maybe: 0, Skip: 0, pending: 0 };
@@ -495,7 +658,7 @@
       return (
         '<tr data-id="' + k.id + '">' +
         '<td class="checkbox-cell"><input type="checkbox" class="row-checkbox" data-id="' + k.id + '"' +
-          (kwSelectedIds[k.id] ? ' checked' : '') +
+          (kwSelection.isSelected(k.id) ? ' checked' : '') +
           ' aria-label="Select ' + escapeHtml(k.phrase) + '"></td>' +
         '<td class="phrase-cell">' + escapeHtml(k.phrase) + '</td>' +
         '<td>' + escapeHtml(k.note || '') + '</td>' +
@@ -516,13 +679,24 @@
   }
 
   function renderKeywordsTab() {
+    // Compute each keyword's decision exactly once for this render pass and
+    // reuse it everywhere below (counts, table rows, bulk-send eligibility,
+    // SERP queue) instead of recomputing computeDecision() redundantly for
+    // the same keyword multiple times per render. The cache is cleared at
+    // the end so it never persists between renders — every read outside this
+    // function still computes fresh from current data.
+    kwDecisionCache = {};
+    state.keywords.forEach(function (k) { kwDecisionCache[k.id] = computeDecisionRaw(k); });
+
     renderKwCounts();
     renderKwTable();
     refreshClusterDatalists();
     refreshKeywordDatalist();
     updateBulkActionButtons();
-    updateKwSelectionUI();
+    kwSelection.updateSelectionUI();
     updateDeletedPhrasesButton();
+
+    kwDecisionCache = null;
   }
 
   /* ---------- Keyword add/edit dialog ---------- */
@@ -613,7 +787,7 @@
           var rowEl = document.querySelector('#kw-tbody tr[data-id="' + id + '"]');
           removeWithFade(rowEl, 'row-removing', function () {
             state.keywords = state.keywords.filter(function (k) { return k.id !== id; });
-            delete kwSelectedIds[id];
+            kwSelection.unselect(id);
             saveKeywords();
             renderKeywordsTab();
             showToast('Keyword deleted.');
@@ -645,8 +819,20 @@
       publishedDate: '',
       lastUpdatedDate: '',
       notes: '',
-      createdAt: todayISO()
+      createdAt: todayISO(),
+      // Links back to the originating keyword so its SERP verdict and
+      // rationale note stay visible on the content item instead of getting
+      // orphaned. Degrades gracefully if the source keyword is later
+      // deleted — see findKeywordById() and its use in contentCard().
+      sourceKeywordId: kw.id
     };
+  }
+
+  // Resolves a content item's sourceKeywordId back to the live keyword
+  // object, or null if it's unset or the keyword was since deleted.
+  function findKeywordById(id) {
+    if (!id) return null;
+    return state.keywords.find(function (k) { return k.id === id; }) || null;
   }
 
   // A keyword is eligible to be sent to the Content Planner only once it
@@ -971,102 +1157,73 @@
 
   /* ---------- Keyword filters ---------- */
   function initKwFilters() {
+    // Every filter-triggered render also refreshes the "select all" header
+    // checkbox state (matching the Content tab's pattern) — a narrower
+    // filter can change which rows count as "all visible" without a single
+    // checkbox actually changing, and skipping this is exactly how that
+    // checkbox went stale before.
     document.getElementById('kw-search').addEventListener('input', debounce(function (e) {
       kwFilters.search = e.target.value;
       renderKwTable();
+      kwSelection.updateSelectionUI();
     }, 150));
     document.getElementById('kw-filter-decision').addEventListener('change', function (e) {
       kwFilters.decision = e.target.value;
       renderKwTable();
+      kwSelection.updateSelectionUI();
     });
     document.getElementById('kw-sort-volume').addEventListener('change', function (e) {
       kwFilters.sortVolume = e.target.value;
       renderKwTable();
+      kwSelection.updateSelectionUI();
     });
     document.getElementById('kw-filter-serp').addEventListener('change', function (e) {
       kwFilters.serp = e.target.value;
       renderKwTable();
+      kwSelection.updateSelectionUI();
     });
-  }
-
-  /* ---------- Keyword bulk select & delete ---------- */
-
-  // Updates the header "select all" checkbox's checked/indeterminate state
-  // based on the *currently visible* rows only, per spec (a narrowed filter
-  // never treats hidden rows as part of "all").
-  function updateKwSelectAllState() {
-    var box = document.getElementById('kw-select-all');
-    var visible = getVisibleKeywords();
-    if (visible.length === 0) { box.checked = false; box.indeterminate = false; return; }
-    var selectedCount = visible.filter(function (k) { return kwSelectedIds[k.id]; }).length;
-    box.checked = selectedCount === visible.length;
-    box.indeterminate = selectedCount > 0 && selectedCount < visible.length;
-  }
-
-  // Shows/hides the "Delete selected" row and keeps its count in sync.
-  // Called after every selection change and every table re-render.
-  function updateKwSelectionUI() {
-    var count = Object.keys(kwSelectedIds).filter(function (id) { return kwSelectedIds[id]; }).length;
-    document.getElementById('kw-selection-row').hidden = count === 0;
-    document.getElementById('kw-selection-count').textContent = count + ' selected';
-    document.getElementById('kw-bulk-delete-btn').textContent = 'Delete ' + count + ' selected';
-    updateKwSelectAllState();
   }
 
   function updateDeletedPhrasesButton() {
     document.getElementById('kw-deleted-list-btn').textContent = 'Previously deleted (' + state.deletedPhrases.length + ')';
   }
 
-  function bulkDeleteSelectedKeywords() {
-    var ids = Object.keys(kwSelectedIds).filter(function (id) { return kwSelectedIds[id]; });
-    if (ids.length === 0) return;
-    var idSet = {};
-    ids.forEach(function (id) { idSet[id] = true; });
-    var selected = state.keywords.filter(function (k) { return idSet[k.id]; });
-    var count = selected.length;
-    if (count === 0) return;
+  /* ---------- Keyword bulk cluster-tagging ---------- */
+  // The highest-value bulk action for this user: after a big CSV import
+  // every new keyword has an empty cluster, and tagging them one-by-one via
+  // the Edit dialog isn't realistic at 1700+ rows. Reuses the same cluster
+  // autocomplete datalist ("cluster-suggestions") as the single-keyword Edit
+  // form, populated by refreshClusterDatalists().
 
-    var message;
-    if (count <= 8) {
-      message = 'Delete ' + count + ' keyword' + (count === 1 ? '' : 's') + ' — "' +
-        selected.map(function (k) { return k.phrase; }).join('", "') +
-        '"? This cannot be undone, and these phrases will be excluded from future CSV imports.';
-    } else {
-      message = 'Delete ' + count + ' selected keywords? This cannot be undone, and these phrases will be excluded from future CSV imports.';
-    }
-
-    confirmAction(message, function () {
-      addDeletedPhrases(selected.map(function (k) { return k.phrase; }));
-      state.keywords = state.keywords.filter(function (k) { return !idSet[k.id]; });
-      saveKeywords();
-      kwSelectedIds = {};
-      renderKeywordsTab();
-      showToast(count + ' keyword' + (count === 1 ? '' : 's') + ' deleted.');
-    }, { label: 'Delete', danger: true });
+  function openKwBulkClusterDialog() {
+    var items = kwSelection.getSelectedItems();
+    if (items.length === 0) return;
+    document.getElementById('kw-bulk-cluster-desc').textContent =
+      'Sets the cluster for ' + items.length + ' selected keyword' + (items.length === 1 ? '' : 's') + '.';
+    var input = document.getElementById('kw-bulk-cluster-input');
+    input.value = '';
+    refreshClusterDatalists();
+    document.getElementById('kw-bulk-cluster-dialog').showModal();
+    input.focus();
   }
 
-  function initKwSelection() {
-    document.getElementById('kw-select-all').addEventListener('change', function (e) {
-      var checked = e.target.checked;
-      var visible = getVisibleKeywords();
-      visible.forEach(function (k) {
-        if (checked) kwSelectedIds[k.id] = true;
-        else delete kwSelectedIds[k.id];
-      });
-      renderKwTable();
-      updateKwSelectionUI();
+  function initKwBulkCluster() {
+    document.getElementById('kw-bulk-set-cluster-btn').addEventListener('click', openKwBulkClusterDialog);
+    document.getElementById('kw-bulk-cluster-cancel-btn').addEventListener('click', function () {
+      document.getElementById('kw-bulk-cluster-dialog').close();
     });
-
-    document.getElementById('kw-tbody').addEventListener('change', function (e) {
-      var cb = e.target.closest('.row-checkbox');
-      if (!cb) return;
-      var id = cb.getAttribute('data-id');
-      if (cb.checked) kwSelectedIds[id] = true;
-      else delete kwSelectedIds[id];
-      updateKwSelectionUI();
+    document.getElementById('kw-bulk-cluster-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var input = document.getElementById('kw-bulk-cluster-input');
+      var cluster = input.value.trim();
+      if (!cluster) { input.focus(); return; }
+      var items = kwSelection.getSelectedItems();
+      items.forEach(function (k) { k.cluster = cluster; });
+      saveKeywords();
+      document.getElementById('kw-bulk-cluster-dialog').close();
+      renderKeywordsTab();
+      showToast(items.length + ' keyword' + (items.length === 1 ? '' : 's') + ' set to cluster "' + cluster + '".');
     });
-
-    document.getElementById('kw-bulk-delete-btn').addEventListener('click', bulkDeleteSelectedKeywords);
   }
 
   /* ---------- Previously deleted keywords dialog ---------- */
@@ -1271,9 +1428,29 @@
 
   var contentFilters = { refreshOnly: false };
 
-  // Ids of currently selected content items (bulk-select/delete). Ephemeral,
-  // matching the same pattern as kwSelectedIds on the Keyword Planner tab.
-  var contentSelectedIds = {};
+  var contentSelection = createBulkSelection({
+    selectAllId: 'content-select-all',
+    containerId: 'content-list',
+    selectionRowId: 'content-selection-row',
+    selectionCountId: 'content-selection-count',
+    bulkDeleteBtnId: 'content-bulk-delete-btn',
+    getVisibleItems: function () { return getVisibleContentItems(); },
+    getAllItems: function () { return state.content; },
+    getItemLabel: function (c) { return c.title; },
+    nounSingular: 'content item',
+    nounPlural: 'content items',
+    extraDeleteWarning: '', // no tombstone list here — not sourced from a re-importable CSV
+    performDelete: function (idSet) {
+      state.content = state.content.filter(function (c) { return !idSet[c.id]; });
+      saveContent();
+    },
+    afterDelete: function (count) {
+      renderContentTab();
+      renderKeywordsTab(); // "already added" state may change
+      showToast(count + ' content item' + (count === 1 ? '' : 's') + ' deleted.');
+    },
+    renderVisibleList: function () { renderContentList(); }
+  });
 
   function monthsSince(dateStr) {
     if (!dateStr) return null;
@@ -1333,6 +1510,22 @@
     return (parts || 'No items yet') + ' (' + doneLike + '/' + items.length + ' done)';
   }
 
+  // Renders the "From keyword: … — SERP: …" line linking back to the
+  // originating keyword (see buildContentItemFromKeyword's sourceKeywordId).
+  // Degrades gracefully to nothing if there's no source id, or the source
+  // keyword was since deleted — never throws.
+  function contentSourceKeywordLine(item) {
+    var kw = item.sourceKeywordId ? findKeywordById(item.sourceKeywordId) : null;
+    if (!kw) return '';
+    var verdict = kw.serpVerdict ? serpVerdictLabel(kw.serpVerdict) : 'Not checked';
+    return (
+      '<div class="content-card-source">From keyword: <span class="mono">' + escapeHtml(kw.phrase) + '</span>' +
+      ' — SERP: ' + escapeHtml(verdict) +
+      (kw.note ? '<br><em>' + escapeHtml(kw.note) + '</em>' : '') +
+      '</div>'
+    );
+  }
+
   function contentCard(item) {
     var stale = isStale(item);
     var months = monthsSince(freshnessDate(item));
@@ -1342,7 +1535,7 @@
         '<div class="content-card-top">' +
           '<div class="card-checkbox-wrap">' +
             '<input type="checkbox" class="row-checkbox" data-id="' + item.id + '"' +
-              (contentSelectedIds[item.id] ? ' checked' : '') +
+              (contentSelection.isSelected(item.id) ? ' checked' : '') +
               ' aria-label="Select ' + escapeHtml(item.title) + '">' +
           '</div>' +
           '<div>' +
@@ -1353,6 +1546,7 @@
           '</div>' +
           '<span class="status-pill">' + escapeHtml(item.status) + '</span>' +
         '</div>' +
+        contentSourceKeywordLine(item) +
         '<div class="content-card-meta">' +
           '<span>Target publish: ' + escapeHtml(item.targetPublishDate || '—') + '</span>' +
           '<span>Published: ' + escapeHtml(item.publishedDate || '—') + '</span>' +
@@ -1422,7 +1616,7 @@
     renderContentList();
     refreshClusterDatalists();
     refreshKeywordDatalist();
-    updateContentSelectionUI();
+    contentSelection.updateSelectionUI();
   }
 
   /* ---------- Content add/edit dialog ---------- */
@@ -1531,7 +1725,7 @@
           var cardEl = document.querySelector('.content-card[data-id="' + id + '"]');
           removeWithFade(cardEl, 'card-removing', function () {
             state.content = state.content.filter(function (c) { return c.id !== id; });
-            delete contentSelectedIds[id];
+            contentSelection.unselect(id);
             saveContent();
             renderContentTab();
             renderKeywordsTab();
@@ -1546,92 +1740,56 @@
     document.getElementById('content-filter-refresh').addEventListener('change', function (e) {
       contentFilters.refreshOnly = e.target.checked;
       renderContentList();
-      updateContentSelectionUI();
+      contentSelection.updateSelectionUI();
     });
   }
 
-  /* ---------- Content bulk select & delete ---------- */
-  // Same pattern as the Keyword Planner's bulk select/delete, but plain
-  // deletes only — no tombstone list, since this tab isn't sourced from a
-  // re-importable CSV and there's nothing to remember.
+  /* ---------- Content bulk cluster-tagging ---------- */
+  // Same pattern as the Keyword tab's bulk cluster action (see
+  // openKwBulkClusterDialog) — small enough to add here too given the
+  // shared selection controller already does the heavy lifting.
 
-  function updateContentSelectAllState() {
-    var box = document.getElementById('content-select-all');
-    var visible = getVisibleContentItems();
-    if (visible.length === 0) { box.checked = false; box.indeterminate = false; return; }
-    var selectedCount = visible.filter(function (c) { return contentSelectedIds[c.id]; }).length;
-    box.checked = selectedCount === visible.length;
-    box.indeterminate = selectedCount > 0 && selectedCount < visible.length;
+  function openContentBulkClusterDialog() {
+    var items = contentSelection.getSelectedItems();
+    if (items.length === 0) return;
+    document.getElementById('content-bulk-cluster-desc').textContent =
+      'Sets the cluster for ' + items.length + ' selected content item' + (items.length === 1 ? '' : 's') + '.';
+    var input = document.getElementById('content-bulk-cluster-input');
+    input.value = '';
+    refreshClusterDatalists();
+    document.getElementById('content-bulk-cluster-dialog').showModal();
+    input.focus();
   }
 
-  function updateContentSelectionUI() {
-    var count = Object.keys(contentSelectedIds).filter(function (id) { return contentSelectedIds[id]; }).length;
-    document.getElementById('content-selection-row').hidden = count === 0;
-    document.getElementById('content-selection-count').textContent = count + ' selected';
-    document.getElementById('content-bulk-delete-btn').textContent = 'Delete ' + count + ' selected';
-    updateContentSelectAllState();
-  }
-
-  function bulkDeleteSelectedContentItems() {
-    var ids = Object.keys(contentSelectedIds).filter(function (id) { return contentSelectedIds[id]; });
-    if (ids.length === 0) return;
-    var idSet = {};
-    ids.forEach(function (id) { idSet[id] = true; });
-    var selected = state.content.filter(function (c) { return idSet[c.id]; });
-    var count = selected.length;
-    if (count === 0) return;
-
-    var message;
-    if (count <= 8) {
-      message = 'Delete ' + count + ' content item' + (count === 1 ? '' : 's') + ' — "' +
-        selected.map(function (c) { return c.title; }).join('", "') +
-        '"? This cannot be undone.';
-    } else {
-      message = 'Delete ' + count + ' selected content items? This cannot be undone.';
-    }
-
-    confirmAction(message, function () {
-      state.content = state.content.filter(function (c) { return !idSet[c.id]; });
+  function initContentBulkCluster() {
+    document.getElementById('content-bulk-set-cluster-btn').addEventListener('click', openContentBulkClusterDialog);
+    document.getElementById('content-bulk-cluster-cancel-btn').addEventListener('click', function () {
+      document.getElementById('content-bulk-cluster-dialog').close();
+    });
+    document.getElementById('content-bulk-cluster-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var input = document.getElementById('content-bulk-cluster-input');
+      var cluster = input.value.trim();
+      if (!cluster) { input.focus(); return; }
+      var items = contentSelection.getSelectedItems();
+      items.forEach(function (c) { c.cluster = cluster; });
       saveContent();
-      contentSelectedIds = {};
+      document.getElementById('content-bulk-cluster-dialog').close();
       renderContentTab();
-      renderKeywordsTab(); // "already added" state may change
-      showToast(count + ' content item' + (count === 1 ? '' : 's') + ' deleted.');
-    }, { label: 'Delete', danger: true });
-  }
-
-  function initContentSelection() {
-    document.getElementById('content-select-all').addEventListener('change', function (e) {
-      var checked = e.target.checked;
-      var visible = getVisibleContentItems();
-      visible.forEach(function (c) {
-        if (checked) contentSelectedIds[c.id] = true;
-        else delete contentSelectedIds[c.id];
-      });
-      renderContentList();
-      updateContentSelectionUI();
+      showToast(items.length + ' content item' + (items.length === 1 ? '' : 's') + ' set to cluster "' + cluster + '".');
     });
-
-    document.getElementById('content-list').addEventListener('change', function (e) {
-      var cb = e.target.closest('.row-checkbox');
-      if (!cb) return;
-      var id = cb.getAttribute('data-id');
-      if (cb.checked) contentSelectedIds[id] = true;
-      else delete contentSelectedIds[id];
-      updateContentSelectionUI();
-    });
-
-    document.getElementById('content-bulk-delete-btn').addEventListener('click', bulkDeleteSelectedContentItems);
   }
 
   /* ===========================================================
      JSON EXPORT / IMPORT (backup / portability)
      =========================================================== */
 
+  var BACKUP_VERSION = 1;
+
   function exportJson() {
     var payload = {
       exportedAt: new Date().toISOString(),
-      version: 1,
+      version: BACKUP_VERSION,
       keywords: state.keywords,
       content: state.content,
       deletedPhrases: state.deletedPhrases
@@ -1649,6 +1807,51 @@
     showToast('Backup exported.');
   }
 
+  // Minimal shape validation for an imported backup file: confirms the
+  // version marker (when present) matches what this app writes, and that
+  // every keyword/content item has at minimum the fields the rest of the
+  // app assumes exist (id, and phrase/title respectively) before any of it
+  // touches state — malformed data here would otherwise crash rendering
+  // later, potentially after the user's *current* data has already been
+  // overwritten. Returns an error string, or null if the file looks valid
+  // enough to import.
+  function validateBackupData(data) {
+    if (!data || typeof data !== 'object') {
+      return 'That file does not look like a planner backup.';
+    }
+    if (data.version !== undefined && data.version !== BACKUP_VERSION) {
+      return 'This backup is version ' + data.version + ', but this app expects version ' +
+        BACKUP_VERSION + '. Export a fresh backup from the current version of this app, or double-check you picked the right file.';
+    }
+
+    var hasKeywords = Array.isArray(data.keywords);
+    var hasContent = Array.isArray(data.content);
+    if (!hasKeywords && !hasContent) {
+      return 'That file does not look like a planner backup — no keywords or content arrays found.';
+    }
+
+    if (hasKeywords) {
+      for (var i = 0; i < data.keywords.length; i++) {
+        var k = data.keywords[i];
+        if (!k || typeof k !== 'object' || !k.id || !k.phrase) {
+          return 'Keyword #' + (i + 1) + ' in this file is missing an id or phrase. Import cancelled so it doesn\'t corrupt your data — check the file wasn\'t edited or truncated.';
+        }
+      }
+    }
+    if (hasContent) {
+      for (var j = 0; j < data.content.length; j++) {
+        var c = data.content[j];
+        if (!c || typeof c !== 'object' || !c.id || !c.title) {
+          return 'Content item #' + (j + 1) + ' in this file is missing an id or title. Import cancelled so it doesn\'t corrupt your data — check the file wasn\'t edited or truncated.';
+        }
+      }
+    }
+    if (data.deletedPhrases !== undefined && !Array.isArray(data.deletedPhrases)) {
+      return 'This file\'s deletedPhrases field is malformed. Import cancelled so it doesn\'t corrupt your data.';
+    }
+    return null;
+  }
+
   function importJson(file) {
     var reader = new FileReader();
     reader.onload = function (e) {
@@ -1659,24 +1862,32 @@
         showToast('Could not parse that file as JSON.');
         return;
       }
-      if (!data || (!Array.isArray(data.keywords) && !Array.isArray(data.content))) {
-        showToast('That file does not look like a planner backup.');
+
+      var validationError = validateBackupData(data);
+      if (validationError) {
+        showToast(validationError);
         return;
       }
+
+      var versionMissing = data.version === undefined;
+      var confirmMsg = 'Importing will replace ALL current keywords and content items with the contents of this backup file. This cannot be undone.' +
+        (versionMissing ? ' (This file has no version marker — it will be imported as-is.)' : '') +
+        ' Continue?';
+
       confirmAction(
-        'Importing will replace ALL current keywords and content items with the contents of this backup file. This cannot be undone. Continue?',
+        confirmMsg,
         function () {
           state.keywords = Array.isArray(data.keywords) ? data.keywords : [];
           state.content = Array.isArray(data.content) ? data.content : [];
           state.deletedPhrases = Array.isArray(data.deletedPhrases) ? data.deletedPhrases : [];
-          kwSelectedIds = {};
-          contentSelectedIds = {};
+          kwSelection.clear();
+          contentSelection.clear();
           saveKeywords();
           saveContent();
           saveDeletedPhrases();
           renderKeywordsTab();
           renderContentTab();
-          showToast('Backup imported.');
+          showToast('Backup imported.' + (versionMissing ? ' (No version marker found in the file.)' : ''));
         },
         { label: 'Replace data', danger: true }
       );
@@ -1697,6 +1908,38 @@
   }
 
   /* ===========================================================
+     Multi-tab awareness
+     =========================================================== */
+  // Warns the user when this tab's copy of the data has gone stale because
+  // another tab/window (same browser, same origin) wrote to localStorage.
+  // The storage event only fires in *other* tabs than the one that made the
+  // write, which is exactly the tab we need to warn — it still has the old
+  // data in memory and would silently clobber the newer write on its next
+  // save otherwise. Deliberately does not auto-reload or auto-merge; the
+  // user chooses when it's safe to reload.
+  function initMultiTabWarning() {
+    var watchedKeys = { };
+    watchedKeys[LS_KEYWORDS] = true;
+    watchedKeys[LS_CONTENT] = true;
+    watchedKeys[LS_DELETED_PHRASES] = true;
+
+    window.addEventListener('storage', function (e) {
+      // e.key is null when the change was a full localStorage.clear() in the
+      // other tab — treat that as relevant too, since it affects our data.
+      if (e.key !== null && !watchedKeys[e.key]) return;
+      if (e.key !== null && e.newValue === e.oldValue) return;
+      document.getElementById('multi-tab-banner').hidden = false;
+    });
+
+    document.getElementById('multi-tab-reload-btn').addEventListener('click', function () {
+      window.location.reload();
+    });
+    document.getElementById('multi-tab-dismiss-btn').addEventListener('click', function () {
+      document.getElementById('multi-tab-banner').hidden = true;
+    });
+  }
+
+  /* ===========================================================
      Init
      =========================================================== */
   function init() {
@@ -1706,7 +1949,8 @@
     initKwForm();
     initKwTableActions();
     initKwFilters();
-    initKwSelection();
+    kwSelection.init();
+    initKwBulkCluster();
     initDeletedPhrasesDialog();
     initCsvImport();
     initBulkActions();
@@ -1715,8 +1959,10 @@
     initContentForm();
     initContentListActions();
     initContentFilters();
-    initContentSelection();
+    contentSelection.init();
+    initContentBulkCluster();
     initJsonBackup();
+    initMultiTabWarning();
     renderKeywordsTab();
     renderContentTab();
   }
