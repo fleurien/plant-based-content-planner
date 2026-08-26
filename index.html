@@ -58,22 +58,21 @@
   </div>
 
   <div class="selection-actions-row" id="kw-selection-row">
-    <div class="selection-row-top">
-      <span class="selection-count" id="kw-selection-count">0 selected</span>
-      <button type="button" class="btn btn-danger" id="kw-bulk-delete-btn" disabled>Delete selected</button>
+    <span class="selection-count" id="kw-selection-count">0 selected</span>
+
+    <div class="selection-actions-group" id="kw-selection-actions-flat">
+      <button type="button" class="btn btn-bulk" id="kw-bulk-set-cluster-btn" disabled>Set cluster for selected</button>
+      <button type="button" class="btn btn-bulk" id="kw-sel-competition-btn" disabled>Set competition to Low</button>
+      <button type="button" class="btn btn-bulk" id="kw-sel-volume-btn" disabled>Set volume to 0</button>
+      <button type="button" class="btn btn-bulk" id="kw-sel-send-btn" disabled>Send to Content Planner</button>
+      <button type="button" class="btn btn-bulk" id="kw-sel-serp-btn" disabled>Start SERP Review</button>
     </div>
 
-    <div class="selection-row-bottom">
-      <div class="selection-actions-group" id="kw-selection-actions-flat">
-        <button type="button" class="btn btn-bulk" id="kw-bulk-set-cluster-btn" disabled>Set cluster for selected</button>
-        <button type="button" class="btn btn-bulk" id="kw-sel-competition-btn" disabled>Set competition to Low</button>
-        <button type="button" class="btn btn-bulk" id="kw-sel-volume-btn" disabled>Set volume to 0</button>
-        <button type="button" class="btn btn-bulk" id="kw-sel-send-btn" disabled>Send to Content Planner</button>
-        <button type="button" class="btn btn-bulk" id="kw-sel-serp-btn" disabled>Start SERP Review</button>
-      </div>
+    <button type="button" class="btn btn-bulk selection-actions-toggle" id="kw-selection-actions-toggle" aria-haspopup="true" aria-expanded="false" disabled>Actions ▾</button>
 
-      <button type="button" class="btn btn-bulk selection-actions-toggle" id="kw-selection-actions-toggle" aria-haspopup="true" aria-expanded="false" disabled>Actions ▾</button>
-    </div>
+    <span class="selection-divider" aria-hidden="true"></span>
+
+    <button type="button" class="btn btn-danger" id="kw-bulk-delete-btn" disabled>Delete selected</button>
   </div>
 
   <div id="kw-selection-actions-popover" class="serp-popover kw-actions-popover" role="menu" aria-label="Bulk actions for selected keywords" hidden>

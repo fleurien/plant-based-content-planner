@@ -485,39 +485,34 @@ main {
 .kw-actions-popover { min-width: 240px; }
 
 /* Keyword Planner's selection row is always present (buttons disable
-   instead of the row hiding — see updateSelectionUI in app.js), and unlike
-   the Content Planner's single-button row it can hold up to 7 buttons. A
-   single wrapping flex line put Delete (margin-left: auto) at the mercy of
-   wherever the button group happened to wrap to, which left an ugly dangling
-   gap on the wrapped line. Instead this splits into two explicit rows: a
-   top row pinning the count and Delete at opposite ends via
-   space-between (Delete's position never depends on how many action
-   buttons there are or where they wrap), and a bottom row that the action
-   button group is free to wrap within on its own, with nothing else on
-   that line for it to visually collide with. This only applies to the
-   Keyword tab's row (scoped by #kw-selection-row) — the Content tab's
-   single-button row keeps the original single-line .selection-actions-row
-   layout untouched.  */
-#kw-selection-row {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.5rem;
-}
-.selection-row-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-.selection-row-bottom {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
+   instead of the row hiding — see updateSelectionUI in app.js) and shares
+   .selection-actions-row's single wrapping flex line with the Content
+   Planner's row. With up to 7 buttons, the shared .btn-danger rule's
+   margin-left: auto pinned Delete to the far right independent of where
+   the action group wrapped, producing a dangling near-empty line above
+   the mobile breakpoint. Letting Delete sit in normal document flow here
+   (last child, after the divider) means that on the rare width where this
+   row does wrap, Delete just wraps down with whatever didn't fit — no
+   orphan gap. At normal desktop/tablet widths the whole row (~1050px of
+   content) fits on one line as intended. */
 #kw-selection-row .btn-danger {
   margin-left: 0;
-  flex: 0 0 auto;
+}
+/* The Keyword row packs 7 buttons into one line at normal desktop widths
+   (unlike the Content Planner's single-button row) — trim padding/gap/
+   font-size slightly on just this row so the full set fits on one line
+   at common widths (~1280px+) instead of Delete alone wrapping down.
+   Still comfortably tappable; falls back to natural wrapping below that. */
+#kw-selection-row .btn-bulk,
+#kw-selection-row .btn-danger {
+  padding: 0.45em 0.65em;
+  font-size: 0.82rem;
+}
+#kw-selection-row {
+  gap: 0.45rem;
+}
+#kw-selection-row .selection-actions-group {
+  gap: 0.4rem;
 }
 
 .card-checkbox-wrap { display: flex; align-items: flex-start; padding-top: 0.2rem; }
