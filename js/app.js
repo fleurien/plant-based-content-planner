@@ -441,9 +441,26 @@
     function updateSelectionUI() {
       var idList = selectedIdList();
       var count = idList.length;
-      document.getElementById(config.selectionRowId).hidden = count === 0;
+      // Default: row only shows once something is selected (Content Planner
+      // tab's behavior, unchanged). A controller can instead pass
+      // showRowWhen(count) to keep its row always present (Keyword Planner
+      // tab) — see that tab's config for why.
+      document.getElementById(config.selectionRowId).hidden = config.showRowWhen
+        ? !config.showRowWhen(count)
+        : count === 0;
       updateSelectionCount(idList);
       document.getElementById(config.bulkDeleteBtnId).textContent = 'Delete ' + count + ' selected';
+      // When a controller's row stays always-visible with nothing selected,
+      // its action buttons communicate that state by disabling instead —
+      // listed explicitly via disableButtonsWhenEmpty since the row spans
+      // both a flat button group and a mobile popover with duplicate ids.
+      if (config.disableButtonsWhenEmpty) {
+        var shouldDisable = count === 0;
+        config.disableButtonsWhenEmpty.forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.disabled = shouldDisable;
+        });
+      }
       updateSelectAllState();
       if (config.afterSelectionUIUpdate) config.afterSelectionUIUpdate(count);
     }
@@ -535,13 +552,18 @@
       showToast(count + ' keyword' + (count === 1 ? '' : 's') + ' deleted.');
     },
     renderVisibleList: function () { renderKwTable(); },
-    // The selection row and the "select keywords to…" hint are mutually
-    // exclusive: the hint only makes sense once there's at least one
-    // keyword to select and nothing is currently selected.
-    afterSelectionUIUpdate: function (count) {
-      var hint = document.getElementById('kw-selection-hint');
-      if (hint) hint.hidden = !(count === 0 && state.keywords.length >= 1);
-    }
+    // The selection row is always present once there's at least one keyword
+    // to act on (rather than only appearing once something is selected) —
+    // its buttons disable via disableButtonsWhenEmpty below to communicate
+    // "nothing selected yet" instead of the row itself disappearing. With a
+    // fully empty dataset there's nothing to select, so it stays hidden.
+    showRowWhen: function () { return state.keywords.length > 0; },
+    disableButtonsWhenEmpty: [
+      'kw-bulk-set-cluster-btn', 'kw-sel-competition-btn', 'kw-sel-volume-btn',
+      'kw-sel-send-btn', 'kw-sel-serp-btn', 'kw-selection-actions-toggle', 'kw-bulk-delete-btn',
+      'kw-bulk-set-cluster-btn-m', 'kw-sel-competition-btn-m', 'kw-sel-volume-btn-m',
+      'kw-sel-send-btn-m', 'kw-sel-serp-btn-m'
+    ]
   });
 
   function kwCountsSummary() {
