@@ -57,17 +57,29 @@
     </div>
   </div>
 
-  <div class="bulk-actions-row">
-    <span class="bulk-actions-label">Bulk actions</span>
-    <button type="button" class="btn btn-bulk" id="kw-bulk-competition-btn">Set blank competition to Low</button>
-    <button type="button" class="btn btn-bulk" id="kw-bulk-send-btn">Send SERP-approved Go keywords</button>
-    <button type="button" class="btn btn-bulk" id="kw-bulk-serp-btn">Start SERP Review</button>
-  </div>
-
   <div class="selection-actions-row" id="kw-selection-row" hidden>
     <span class="selection-count" id="kw-selection-count">0 selected</span>
-    <button type="button" class="btn btn-bulk" id="kw-bulk-set-cluster-btn">Set cluster for selected</button>
+
+    <div class="selection-actions-group" id="kw-selection-actions-flat">
+      <button type="button" class="btn btn-bulk" id="kw-bulk-set-cluster-btn">Set cluster for selected</button>
+      <button type="button" class="btn btn-bulk" id="kw-sel-competition-btn">Set competition to Low</button>
+      <button type="button" class="btn btn-bulk" id="kw-sel-volume-btn">Set volume to 0</button>
+      <button type="button" class="btn btn-bulk" id="kw-sel-send-btn">Send to Content Planner</button>
+      <button type="button" class="btn btn-bulk" id="kw-sel-serp-btn">Start SERP Review</button>
+    </div>
+
+    <button type="button" class="btn btn-bulk selection-actions-toggle" id="kw-selection-actions-toggle" aria-haspopup="true" aria-expanded="false">Actions ▾</button>
+
+    <span class="selection-divider" aria-hidden="true"></span>
     <button type="button" class="btn btn-danger" id="kw-bulk-delete-btn">Delete selected</button>
+  </div>
+
+  <div id="kw-selection-actions-popover" class="serp-popover kw-actions-popover" role="menu" aria-label="Bulk actions for selected keywords" hidden>
+    <button type="button" class="btn btn-small" role="menuitem" id="kw-bulk-set-cluster-btn-m">Set cluster for selected</button>
+    <button type="button" class="btn btn-small" role="menuitem" id="kw-sel-competition-btn-m">Set competition to Low</button>
+    <button type="button" class="btn btn-small" role="menuitem" id="kw-sel-volume-btn-m">Set volume to 0</button>
+    <button type="button" class="btn btn-small" role="menuitem" id="kw-sel-send-btn-m">Send to Content Planner</button>
+    <button type="button" class="btn btn-small" role="menuitem" id="kw-sel-serp-btn-m">Start SERP Review</button>
   </div>
 
   <div id="kw-import-summary" class="import-summary" role="status" hidden></div>
@@ -106,6 +118,8 @@
       </select>
     </label>
   </div>
+
+  <p class="field-hint kw-selection-hint" id="kw-selection-hint" hidden>Select keywords to delete, bulk-edit competition/volume, send to Content Planner, or start a SERP review. Tip: filter first, then use the header checkbox to select a whole batch at once.</p>
 
   <div class="table-scroll">
     <table class="data-table" id="kw-table">
@@ -150,7 +164,11 @@
 
   <div class="selection-actions-row" id="content-selection-row" hidden>
     <span class="selection-count" id="content-selection-count">0 selected</span>
-    <button type="button" class="btn btn-bulk" id="content-bulk-set-cluster-btn">Set cluster for selected</button>
+    <div class="selection-actions-group">
+      <button type="button" class="btn btn-bulk" id="content-bulk-set-cluster-btn">Set cluster for selected</button>
+    </div>
+    <span class="selection-divider" aria-hidden="true"></span>
+    <!-- No mobile-collapse menu on this tab: only one non-destructive action, per spec ("stays functionally as they are"). -->
     <button type="button" class="btn btn-danger" id="content-bulk-delete-btn">Delete selected</button>
   </div>
 

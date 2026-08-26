@@ -307,24 +307,6 @@ main {
 .toolbar-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 .toolbar-checkbox { margin-left: 0.25rem; }
 
-.bulk-actions-row {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-  background: var(--bg-alt);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius);
-  padding: 0.55rem 0.8rem;
-  margin-bottom: 1rem;
-}
-.bulk-actions-label {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--ink-soft);
-}
 .btn-bulk {
   border-color: var(--accent);
   background: var(--surface);
@@ -459,10 +441,10 @@ main {
 .selection-actions-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.6rem;
   flex-wrap: wrap;
-  background: var(--skip-bg);
-  border: 1px solid var(--skip);
+  background: var(--bg-alt);
+  border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
   padding: 0.55rem 0.8rem;
   margin-bottom: 1rem;
@@ -472,8 +454,35 @@ main {
   font-family: var(--font-mono);
   font-size: 0.82rem;
   font-weight: 600;
-  color: var(--skip);
+  color: var(--ink-soft);
 }
+.selection-count-qualifier {
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+.selection-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.selection-actions-toggle { display: none; }
+.selection-divider {
+  width: 1px;
+  align-self: stretch;
+  min-height: 1.4em;
+  background: var(--border-strong);
+  margin: 0 0.1rem;
+}
+/* Delete is the one destructive action in this row — pinned to the far
+   right and visually separated by the divider above, per UX spec, so it
+   never gets lost among the non-destructive actions to its left. Applies
+   to both the Keyword and Content Planner tabs' selection rows, since both
+   share this class. */
+.selection-actions-row .btn-danger {
+  margin-left: auto;
+}
+.kw-actions-popover { min-width: 240px; }
 
 .card-checkbox-wrap { display: flex; align-items: flex-start; padding-top: 0.2rem; }
 
@@ -796,4 +805,13 @@ main {
   .field-row .field { flex: 1 1 auto; }
   .serp-review-header { flex-direction: column; align-items: flex-start; gap: 0.4rem; }
   .serp-review-verdicts { flex-direction: column; }
+
+  /* Collapse the Keyword Planner's 5 non-destructive selection actions into
+     an "Actions ▾" popover menu below the breakpoint. Delete intentionally
+     stays outside this rule (and outside the popover) so it's never harder
+     to find on mobile — only #kw-selection-actions-flat is targeted here,
+     not the shared .selection-actions-group class, so the Content Planner
+     tab's own (single-button) selection row is unaffected. */
+  #kw-selection-actions-flat { display: none; }
+  .selection-actions-toggle { display: inline-flex; }
 }

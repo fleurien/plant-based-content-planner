@@ -416,12 +416,36 @@
       box.indeterminate = selectedCount > 0 && selectedCount < visible.length;
     }
 
+    // Renders the selection count chip, adding a de-emphasized "(m not
+    // shown)" qualifier whenever some selected ids fall outside the
+    // currently-visible (filtered) set — selection persists across filter
+    // changes, so this keeps that fact visible instead of silently hiding
+    // it, without it reading as a warning (informational only).
+    function updateSelectionCount(idList) {
+      var countEl = document.getElementById(config.selectionCountId);
+      var count = idList.length;
+      if (count === 0) {
+        countEl.textContent = '0 selected';
+        return;
+      }
+      var visibleIds = {};
+      config.getVisibleItems().forEach(function (item) { visibleIds[item.id] = true; });
+      var notShown = idList.filter(function (id) { return !visibleIds[id]; }).length;
+      if (notShown > 0) {
+        countEl.innerHTML = count + ' selected <span class="selection-count-qualifier">(' + notShown + ' not shown)</span>';
+      } else {
+        countEl.textContent = count + ' selected';
+      }
+    }
+
     function updateSelectionUI() {
-      var count = selectedIdList().length;
+      var idList = selectedIdList();
+      var count = idList.length;
       document.getElementById(config.selectionRowId).hidden = count === 0;
-      document.getElementById(config.selectionCountId).textContent = count + ' selected';
+      updateSelectionCount(idList);
       document.getElementById(config.bulkDeleteBtnId).textContent = 'Delete ' + count + ' selected';
       updateSelectAllState();
+      if (config.afterSelectionUIUpdate) config.afterSelectionUIUpdate(count);
     }
 
     function clear() { selected = {}; }
@@ -510,7 +534,14 @@
       renderKeywordsTab();
       showToast(count + ' keyword' + (count === 1 ? '' : 's') + ' deleted.');
     },
-    renderVisibleList: function () { renderKwTable(); }
+    renderVisibleList: function () { renderKwTable(); },
+    // The selection row and the "select keywords to…" hint are mutually
+    // exclusive: the hint only makes sense once there's at least one
+    // keyword to select and nothing is currently selected.
+    afterSelectionUIUpdate: function (count) {
+      var hint = document.getElementById('kw-selection-hint');
+      if (hint) hint.hidden = !(count === 0 && state.keywords.length >= 1);
+    }
   });
 
   function kwCountsSummary() {
@@ -692,7 +723,6 @@
     renderKwTable();
     refreshClusterDatalists();
     refreshKeywordDatalist();
-    updateBulkActionButtons();
     kwSelection.updateSelectionUI();
     updateDeletedPhrasesButton();
 
@@ -857,78 +887,76 @@
     showToast('Sent "' + kw.phrase + '" to Content Planner as a new idea.');
   }
 
-  /* ---------- Bulk keyword actions ---------- */
+  /* ---------- Selection-driven bulk keyword actions ----------
+     Replaces the old standalone "Set blank competition to Low" / "Send
+     SERP-approved Go keywords" / global "Start SERP Review" buttons with a
+     single unified action bar on whatever's currently selected (see
+     #kw-selection-row). Per product decision, "Set competition to Low" and
+     "Set volume to 0" apply unconditionally to every selected keyword
+     (overwriting existing values), and "Send to Content Planner" from a
+     selection has no eligibility gate — every selected keyword is sent
+     (still deduped against existing links). Only the per-row "Send to
+     Content" button in the table keeps the Go+verdict eligibility gate. */
 
-  // Keywords whose Competition is blank/unset (Google Keyword Planner
-  // commonly leaves this blank for informational/recipe queries).
-  function blankCompetitionKeywords() {
-    return state.keywords.filter(function (k) { return !k.competition; });
-  }
-
-  // Keywords eligible for the bulk "send to Content Planner" action: Go
-  // decision + SERP verdict gap/doable (per eligibleForContentPlanner),
-  // that doesn't already have a linked Content Planner entry — run
-  // through the exact same dedupe check the single-row "Send to Content"
-  // action uses.
-  function eligibleForBulkSend() {
-    return state.keywords.filter(function (k) {
-      return eligibleForContentPlanner(k) && !contentAlreadyExistsForKeyword(k.phrase);
-    });
-  }
-
-  function updateBulkActionButtons() {
-    var blankCount = blankCompetitionKeywords().length;
-    var competitionBtn = document.getElementById('kw-bulk-competition-btn');
-    competitionBtn.disabled = blankCount === 0;
-    competitionBtn.textContent = 'Set blank competition to Low' + (blankCount ? ' (' + blankCount + ')' : '');
-
-    var eligibleCount = eligibleForBulkSend().length;
-    document.getElementById('kw-bulk-send-btn').disabled = eligibleCount === 0;
-
-    var serpCount = serpReviewQueue().length;
-    var serpBtn = document.getElementById('kw-bulk-serp-btn');
-    serpBtn.disabled = serpCount === 0;
-    serpBtn.textContent = 'Start SERP Review' + (serpCount ? ' (' + serpCount + ')' : '');
-  }
-
-  function bulkSetBlankCompetitionToLow() {
-    var count = blankCompetitionKeywords().length;
-    if (count === 0) return;
+  function bulkSetSelectedCompetitionToLow() {
+    var items = kwSelection.getSelectedItems();
+    var n = items.length;
+    if (n === 0) return;
     confirmAction(
-      count + ' keyword' + (count === 1 ? '' : 's') + ' currently have unset Competition. They will be set to "Low". Continue?',
+      'Competition will be set to Low on all ' + n + ' selected keyword' + (n === 1 ? '' : 's') +
+        ', including any that already have a different value. Continue?',
       function () {
-        var updated = 0;
-        state.keywords.forEach(function (k) {
-          if (!k.competition) { k.competition = 'Low'; updated++; }
-        });
+        items.forEach(function (k) { k.competition = 'Low'; });
         saveKeywords();
         renderKeywordsTab();
-        showToast(updated + ' keyword' + (updated === 1 ? '' : 's') + ' updated to Low competition.');
+        showToast(n + ' keyword' + (n === 1 ? '' : 's') + ' updated to Low competition.');
       },
       { label: 'Set to Low', danger: false }
     );
   }
 
-  function updateBulkSendDialogBody() {
-    var n = eligibleForBulkSend().length;
+  function bulkSetSelectedVolumeToZero() {
+    var items = kwSelection.getSelectedItems();
+    var n = items.length;
+    if (n === 0) return;
+    confirmAction(
+      'Volume will be set to 0 (no data) on all ' + n + ' selected keyword' + (n === 1 ? '' : 's') +
+        ', overwriting existing values. This also changes their computed Decision to Skip. Continue?',
+      function () {
+        items.forEach(function (k) { k.volume = 0; });
+        saveKeywords();
+        renderKeywordsTab();
+        showToast(n + ' keyword' + (n === 1 ? '' : 's') + ' set to volume 0.');
+      },
+      { label: 'Set to 0', danger: false }
+    );
+  }
+
+  // Reuses the existing #bulk-send-dialog component. Unlike the old
+  // "Send SERP-approved Go keywords" global action, this has no eligibility
+  // gate — every currently-selected keyword is sent regardless of Decision
+  // or SERP verdict. The dedupe-by-target-keyword check still applies (data
+  // integrity, not a policy gate): a keyword already linked to a Content
+  // Planner item is skipped rather than creating a duplicate.
+  function updateSelectionSendDialogBody() {
+    var n = kwSelection.getSelectedItems().length;
     document.getElementById('bulk-send-dialog-body').textContent =
-      n + ' keyword' + (n === 1 ? '' : 's') + ' with a Go decision and a SERP verdict of Gap or ' +
-      'Doable (and no existing Content Planner entry) will be sent as new "Idea" items. Continue?';
+      'Send ' + n + ' selected keyword' + (n === 1 ? '' : 's') + ' to Content Planner as new Idea items? ' +
+      'This applies to every selected keyword regardless of Decision or SERP status. ' +
+      'Keywords already linked to a Content Planner item will be skipped.';
     document.getElementById('bulk-send-ok-btn').disabled = n === 0;
   }
 
-  function openBulkSendDialog() {
-    if (eligibleForBulkSend().length === 0) return;
-    updateBulkSendDialogBody();
+  function openSelectionSendDialog() {
+    if (kwSelection.getSelectedItems().length === 0) return;
+    updateSelectionSendDialogBody();
     document.getElementById('bulk-send-dialog').showModal();
   }
 
-  function bulkSendGoToContentPlanner() {
-    var eligible = eligibleForBulkSend();
+  function sendSelectionToContentPlanner() {
+    var items = kwSelection.getSelectedItems();
     var sent = 0, skipped = 0;
-    eligible.forEach(function (kw) {
-      // Re-check as we go: two eligible keywords could share a phrase, in
-      // which case the first one sent makes the second a duplicate.
+    items.forEach(function (kw) {
       if (contentAlreadyExistsForKeyword(kw.phrase)) { skipped++; return; }
       state.content.push(buildContentItemFromKeyword(kw));
       sent++;
@@ -937,13 +965,73 @@
     renderKeywordsTab();
     renderContentTab();
     var msg = sent + ' keyword' + (sent === 1 ? '' : 's') + ' sent to Content Planner.';
-    if (skipped) msg += ' ' + skipped + ' already existed and ' + (skipped === 1 ? 'was' : 'were') + ' skipped.';
+    if (skipped) msg += ' ' + skipped + ' already linked and ' + (skipped === 1 ? 'was' : 'were') + ' skipped.';
     showToast(msg);
   }
 
-  function initBulkActions() {
-    document.getElementById('kw-bulk-competition-btn').addEventListener('click', bulkSetBlankCompetitionToLow);
-    document.getElementById('kw-bulk-send-btn').addEventListener('click', openBulkSendDialog);
+  /* ---------- Mobile "Actions ▾" popover for the selection row ----------
+     Below the responsive breakpoint the 5 non-destructive selection actions
+     collapse into a popover, reusing the same positioning / open-close /
+     keyboard / outside-click pattern as the inline SERP verdict popover
+     (see openSerpPopover/closeSerpPopover below). Delete is never part of
+     this menu — it stays flat next to the count on every viewport. */
+  function openKwActionsPopover() {
+    var pop = document.getElementById('kw-selection-actions-popover');
+    var btn = document.getElementById('kw-selection-actions-toggle');
+    var rect = btn.getBoundingClientRect();
+    pop.style.top = (window.scrollY + rect.bottom + 4) + 'px';
+    pop.style.left = (window.scrollX + rect.left) + 'px';
+    pop.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    var firstBtn = pop.querySelector('button');
+    if (firstBtn) firstBtn.focus();
+  }
+
+  function closeKwActionsPopover() {
+    var pop = document.getElementById('kw-selection-actions-popover');
+    if (pop.hidden) return;
+    pop.hidden = true;
+    document.getElementById('kw-selection-actions-toggle').setAttribute('aria-expanded', 'false');
+  }
+
+  // Binds one shared handler to both the flat desktop button (id) and its
+  // mobile popover-menu counterpart (id + "-m"), so there's exactly one
+  // source of truth for each action's behavior regardless of which control
+  // triggered it.
+  function bindSelectionAction(id, handler) {
+    ['', '-m'].forEach(function (suffix) {
+      var el = document.getElementById(id + suffix);
+      if (el) {
+        el.addEventListener('click', function () {
+          closeKwActionsPopover();
+          handler();
+        });
+      }
+    });
+  }
+
+  function initKwSelectionActions() {
+    bindSelectionAction('kw-bulk-set-cluster-btn', openKwBulkClusterDialog);
+    bindSelectionAction('kw-sel-competition-btn', bulkSetSelectedCompetitionToLow);
+    bindSelectionAction('kw-sel-volume-btn', bulkSetSelectedVolumeToZero);
+    bindSelectionAction('kw-sel-send-btn', openSelectionSendDialog);
+    bindSelectionAction('kw-sel-serp-btn', openSerpReviewForSelection);
+
+    document.getElementById('kw-selection-actions-toggle').addEventListener('click', function () {
+      var pop = document.getElementById('kw-selection-actions-popover');
+      if (pop.hidden) openKwActionsPopover();
+      else closeKwActionsPopover();
+    });
+    document.addEventListener('click', function (e) {
+      var pop = document.getElementById('kw-selection-actions-popover');
+      if (pop.hidden) return;
+      if (pop.contains(e.target) || e.target.closest('#kw-selection-actions-toggle')) return;
+      closeKwActionsPopover();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeKwActionsPopover();
+    });
+    window.addEventListener('scroll', function () { closeKwActionsPopover(); }, true);
 
     document.getElementById('bulk-send-cancel-btn').addEventListener('click', function () {
       document.getElementById('bulk-send-dialog').close();
@@ -951,7 +1039,7 @@
     document.getElementById('bulk-send-form').addEventListener('submit', function (e) {
       e.preventDefault();
       document.getElementById('bulk-send-dialog').close();
-      bulkSendGoToContentPlanner();
+      sendSelectionToContentPlanner();
     });
   }
 
@@ -971,21 +1059,58 @@
     }
   }
 
+  // Fixed ordered list of keyword ids for the *current* open review
+  // session, built once when the session starts (see
+  // openSerpReviewForSelection) from the Go-then-Maybe-then-rest priority
+  // order below — unlike the old global queue, this does NOT get
+  // recomputed as verdicts are recorded, because a selection-scoped review
+  // deliberately doesn't filter by decision or existing verdict (already-
+  // verdicted keywords can be re-reviewed if they were selected).
+  var serpReviewQueueIds = [];
   // Ids skipped ("Review later") during the *current* open review session.
-  // Not persisted anywhere — reset each time the dialog is opened/closed —
-  // so those keywords simply reappear next time serpReviewQueue() is read
-  // fresh, per spec.
   var serpReviewSkippedIds = [];
+  // Ids that were given a verdict during the *current* open review session
+  // (tracked separately from serpReviewSkippedIds so progress/remaining
+  // math is unambiguous). Neither list is persisted — both reset each time
+  // a new review session starts or the dialog closes.
+  var serpReviewDoneIds = [];
+
+  function serpReviewPriority(decision) {
+    return decision === 'Go' ? 0 : decision === 'Maybe' ? 1 : 2;
+  }
+
+  // Builds the review queue for a set of selected keywords: every keyword
+  // passed in, any decision (including already-Skip or already-verdicted
+  // ones), ordered Go-then-Maybe-then-rest, and by volume (High -> Low)
+  // within each group — reusing the same volume comparator as elsewhere.
+  // Separate from the old serpReviewQueue() below, which filters to
+  // unverdicted Go/Maybe keywords app-wide and is no longer the entry point
+  // for SERP Review (kept as-is in case anything else needs that logic).
+  function serpReviewQueueForSelection(items) {
+    var list = items.slice();
+    list.sort(function (a, b) {
+      var pa = serpReviewPriority(computeDecision(a));
+      var pb = serpReviewPriority(computeDecision(b));
+      if (pa !== pb) return pa - pb;
+      var av = parseVolumeToNumber(a.volume); av = av === null ? -1 : av;
+      var bv = parseVolumeToNumber(b.volume); bv = bv === null ? -1 : bv;
+      return bv - av;
+    });
+    return list;
+  }
 
   function serpReviewRemaining() {
-    var full = serpReviewQueue();
-    return full.filter(function (k) { return serpReviewSkippedIds.indexOf(k.id) === -1; });
+    return serpReviewQueueIds
+      .filter(function (id) {
+        return serpReviewSkippedIds.indexOf(id) === -1 && serpReviewDoneIds.indexOf(id) === -1;
+      })
+      .map(function (id) { return state.keywords.find(function (k) { return k.id === id; }); })
+      .filter(Boolean); // defensive: a selected keyword could be deleted mid-session
   }
 
   function renderSerpReview() {
-    var full = serpReviewQueue();
-    var remaining = full.filter(function (k) { return serpReviewSkippedIds.indexOf(k.id) === -1; });
-    var total = full.length;
+    var total = serpReviewQueueIds.length;
+    var remaining = serpReviewRemaining();
     var progressEl = document.getElementById('serp-review-progress');
     var bodyEl = document.getElementById('serp-review-body');
 
@@ -993,33 +1118,40 @@
       progressEl.textContent = 'Review complete';
       bodyEl.innerHTML =
         '<div class="serp-review-empty">' +
-          '<p>All caught up — every Go/Maybe keyword has a SERP verdict.</p>' +
+          '<p>No keywords to review.</p>' +
           '<button type="button" class="btn btn-primary" id="serp-review-done-btn">Close</button>' +
         '</div>';
       document.getElementById('serp-review-done-btn').addEventListener('click', closeSerpReview);
-      updateBulkActionButtons();
       return;
     }
 
-    // Everything left in the live queue has been "Review later"-skipped
-    // earlier in this same session — nothing new to show right now, but
-    // (per spec) those keywords are still unverdicted and will reappear
-    // next time the queue is computed fresh, e.g. next time Review opens.
+    // Everything left in the queue has either been given a verdict or
+    // "Review later"-skipped earlier in this same session.
     if (remaining.length === 0) {
-      progressEl.textContent = 'Review paused';
-      bodyEl.innerHTML =
-        '<div class="serp-review-empty">' +
-          '<p>' + total + ' keyword' + (total === 1 ? '' : 's') + ' marked "Review later" — ' +
-          (total === 1 ? 'it' : 'they') + ' will reappear next time you open SERP Review.</p>' +
-          '<button type="button" class="btn btn-primary" id="serp-review-done-btn">Close</button>' +
-        '</div>';
+      var skippedCount = serpReviewSkippedIds.length;
+      if (skippedCount > 0) {
+        progressEl.textContent = 'Review paused';
+        bodyEl.innerHTML =
+          '<div class="serp-review-empty">' +
+            '<p>' + skippedCount + ' selected keyword' + (skippedCount === 1 ? '' : 's') + ' marked "Review later" — ' +
+            (skippedCount === 1 ? 'it' : 'they') + ' will reappear next time you start a SERP review on this selection.</p>' +
+            '<button type="button" class="btn btn-primary" id="serp-review-done-btn">Close</button>' +
+          '</div>';
+      } else {
+        progressEl.textContent = 'Review complete';
+        bodyEl.innerHTML =
+          '<div class="serp-review-empty">' +
+            '<p>All ' + total + ' selected keyword' + (total === 1 ? '' : 's') + ' reviewed.</p>' +
+            '<button type="button" class="btn btn-primary" id="serp-review-done-btn">Close</button>' +
+          '</div>';
+      }
       document.getElementById('serp-review-done-btn').addEventListener('click', closeSerpReview);
       return;
     }
 
     var current = remaining[0];
-    var index = total - remaining.length + 1;
-    progressEl.textContent = 'Reviewing ' + index + ' of ' + total;
+    var reviewedCount = total - remaining.length;
+    progressEl.textContent = reviewedCount + ' of ' + total + ' selected keywords reviewed';
 
     var decision = computeDecision(current);
 
@@ -1059,6 +1191,7 @@
         kw.serpCheckedAt = todayISO();
         saveKeywords();
       }
+      serpReviewDoneIds.push(currentId);
     } else {
       serpReviewSkippedIds.push(currentId);
     }
@@ -1070,18 +1203,28 @@
     document.getElementById('serp-review-dialog').close();
   }
 
-  function initSerpReview() {
-    document.getElementById('kw-bulk-serp-btn').addEventListener('click', function () {
-      var queue = serpReviewQueue();
-      if (queue.length === 0) return;
-      serpReviewSkippedIds = [];
-      renderSerpReview();
-      document.getElementById('serp-review-dialog').showModal();
-    });
+  // Entry point for "Start SERP Review" from the selection action bar (the
+  // desktop button and its mobile popover counterpart both call this — see
+  // initKwSelectionActions). Purely navigational: no confirm dialog, since
+  // every verdict recorded inside the review flow is already its own
+  // committed action.
+  function openSerpReviewForSelection() {
+    var items = kwSelection.getSelectedItems();
+    if (items.length === 0) return;
+    var queue = serpReviewQueueForSelection(items);
+    serpReviewQueueIds = queue.map(function (k) { return k.id; });
+    serpReviewSkippedIds = [];
+    serpReviewDoneIds = [];
+    renderSerpReview();
+    document.getElementById('serp-review-dialog').showModal();
+  }
 
+  function initSerpReview() {
     document.getElementById('serp-review-close-btn').addEventListener('click', closeSerpReview);
     document.getElementById('serp-review-dialog').addEventListener('close', function () {
+      serpReviewQueueIds = [];
       serpReviewSkippedIds = [];
+      serpReviewDoneIds = [];
       renderKeywordsTab();
     });
 
@@ -1208,7 +1351,9 @@
   }
 
   function initKwBulkCluster() {
-    document.getElementById('kw-bulk-set-cluster-btn').addEventListener('click', openKwBulkClusterDialog);
+    // The "Set cluster for selected" button itself is bound in
+    // initKwSelectionActions (shared with its mobile popover counterpart) —
+    // this only wires the dialog that button opens.
     document.getElementById('kw-bulk-cluster-cancel-btn').addEventListener('click', function () {
       document.getElementById('kw-bulk-cluster-dialog').close();
     });
@@ -1953,7 +2098,7 @@
     initKwBulkCluster();
     initDeletedPhrasesDialog();
     initCsvImport();
-    initBulkActions();
+    initKwSelectionActions();
     initSerpReview();
     initSerpPopover();
     initContentForm();
