@@ -31,6 +31,14 @@
   <button type="button" class="tab" id="tab-btn-content" role="tab" aria-selected="false" aria-controls="tab-content" tabindex="-1">Content Planner</button>
 </nav>
 
+<div id="multi-tab-banner" class="multi-tab-banner" role="alert" hidden>
+  <p>This app is open in another tab and the data has changed. Reload this tab to see the latest data before making changes, or your next edit could overwrite it.</p>
+  <div class="multi-tab-banner-actions">
+    <button type="button" class="btn btn-primary" id="multi-tab-reload-btn">Reload now</button>
+    <button type="button" class="btn btn-ghost" id="multi-tab-dismiss-btn">Dismiss</button>
+  </div>
+</div>
+
 <main id="main">
 
 <!-- ==================== KEYWORD PLANNER TAB ==================== -->
@@ -58,6 +66,7 @@
 
   <div class="selection-actions-row" id="kw-selection-row" hidden>
     <span class="selection-count" id="kw-selection-count">0 selected</span>
+    <button type="button" class="btn btn-bulk" id="kw-bulk-set-cluster-btn">Set cluster for selected</button>
     <button type="button" class="btn btn-danger" id="kw-bulk-delete-btn">Delete selected</button>
   </div>
 
@@ -141,6 +150,7 @@
 
   <div class="selection-actions-row" id="content-selection-row" hidden>
     <span class="selection-count" id="content-selection-count">0 selected</span>
+    <button type="button" class="btn btn-bulk" id="content-bulk-set-cluster-btn">Set cluster for selected</button>
     <button type="button" class="btn btn-danger" id="content-bulk-delete-btn">Delete selected</button>
   </div>
 
@@ -289,6 +299,38 @@
   <div class="dialog-actions">
     <button type="button" class="btn btn-primary" id="deleted-list-close-btn">Close</button>
   </div>
+</dialog>
+
+<!-- ==================== BULK SET CLUSTER DIALOG (KEYWORDS) ==================== -->
+<dialog id="kw-bulk-cluster-dialog" class="app-dialog app-dialog--small" aria-labelledby="kw-bulk-cluster-title">
+  <form method="dialog" id="kw-bulk-cluster-form">
+    <h2 id="kw-bulk-cluster-title">Set cluster for selected keywords</h2>
+    <p class="field-hint" id="kw-bulk-cluster-desc"></p>
+    <div class="field">
+      <label for="kw-bulk-cluster-input">Cluster</label>
+      <input type="text" id="kw-bulk-cluster-input" list="cluster-suggestions" autocomplete="off" required>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="kw-bulk-cluster-cancel-btn">Cancel</button>
+      <button type="submit" class="btn btn-primary" id="kw-bulk-cluster-ok-btn">Apply</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ==================== BULK SET CLUSTER DIALOG (CONTENT) ==================== -->
+<dialog id="content-bulk-cluster-dialog" class="app-dialog app-dialog--small" aria-labelledby="content-bulk-cluster-title">
+  <form method="dialog" id="content-bulk-cluster-form">
+    <h2 id="content-bulk-cluster-title">Set cluster for selected content items</h2>
+    <p class="field-hint" id="content-bulk-cluster-desc"></p>
+    <div class="field">
+      <label for="content-bulk-cluster-input">Cluster</label>
+      <input type="text" id="content-bulk-cluster-input" list="cluster-suggestions-content" autocomplete="off" required>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn" id="content-bulk-cluster-cancel-btn">Cancel</button>
+      <button type="submit" class="btn btn-primary" id="content-bulk-cluster-ok-btn">Apply</button>
+    </div>
+  </form>
 </dialog>
 
 <!-- ==================== BULK SEND TO CONTENT PLANNER DIALOG ==================== -->

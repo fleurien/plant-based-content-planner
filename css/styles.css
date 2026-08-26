@@ -412,7 +412,6 @@ main {
 }
 .data-table td.mono, .phrase-cell { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .data-table tbody tr:hover { background: var(--bg-alt); }
-.data-table tbody tr.stale-row { background: var(--maybe-bg); }
 
 .badge {
   display: inline-block;
@@ -611,6 +610,15 @@ main {
   color: var(--ink-soft);
 }
 .content-card-notes { font-size: 0.88rem; color: var(--ink); white-space: pre-wrap; }
+.content-card-source {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45em 0.75em;
+}
+.content-card-source em { color: var(--ink); font-style: italic; }
 .status-pill {
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -723,6 +731,25 @@ main {
 }
 .serp-popover .btn { text-align: left; }
 .serp-popover[hidden] { display: none; }
+
+/* ---------- Multi-tab warning banner ---------- */
+.multi-tab-banner {
+  max-width: 1180px;
+  margin: 0 auto 1rem;
+  padding: 0.7em 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background: var(--skip-bg);
+  border-top: 1px solid var(--skip);
+  border-bottom: 1px solid var(--skip);
+  color: var(--ink);
+}
+.multi-tab-banner[hidden] { display: none; }
+.multi-tab-banner p { margin: 0; font-size: 0.9rem; max-width: 640px; }
+.multi-tab-banner-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
 /* ---------- Toast ---------- */
 .toast {
