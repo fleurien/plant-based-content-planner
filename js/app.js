@@ -857,6 +857,25 @@
     });
   }
 
+  // Builds a snapshot of a keyword's key data to embed directly onto a
+  // Content Planner item at send time. Sending a keyword to Content Planner
+  // now removes it from state.keywords (see sendKeywordToContentPlanner /
+  // sendSelectionToContentPlanner), so a live lookup via findKeywordById()
+  // won't resolve going forward — this snapshot is what keeps the "From
+  // keyword: …" info on the content card working after that removal.
+  function buildKeywordSnapshot(kw) {
+    return {
+      phrase: kw.phrase,
+      volume: kw.volume,
+      competition: kw.competition,
+      serpVerdict: kw.serpVerdict,
+      serpCheckedAt: kw.serpCheckedAt,
+      note: kw.note,
+      quick: kw.quick,
+      cluster: kw.cluster
+    };
+  }
+
   // Builds a new Content Planner item from a keyword, using the same
   // pre-fill rules everywhere a keyword gets sent over (single-row action
   // and the bulk "Send all Go" action both call this).
@@ -874,9 +893,17 @@
       createdAt: todayISO(),
       // Links back to the originating keyword so its SERP verdict and
       // rationale note stay visible on the content item instead of getting
-      // orphaned. Degrades gracefully if the source keyword is later
-      // deleted — see findKeywordById() and its use in contentCard().
-      sourceKeywordId: kw.id
+      // orphaned. Kept for backward compatibility with content items created
+      // before keywords started being removed on send — see
+      // findKeywordById() and its use in contentSourceKeywordLine(), which
+      // tries this live lookup first before falling back to the snapshot
+      // below. Degrades gracefully if the source keyword is later deleted.
+      sourceKeywordId: kw.id,
+      // Snapshot of the keyword's data as of the moment it was sent — see
+      // buildKeywordSnapshot(). Sending removes the keyword from
+      // state.keywords, so this is the durable record once sourceKeywordId
+      // no longer resolves.
+      sourceKeywordSnapshot: buildKeywordSnapshot(kw)
     };
   }
 
@@ -896,6 +923,12 @@
     return computeDecision(kw) === 'Go' && (verdict === 'gap' || verdict === 'doable');
   }
 
+  // Sending a keyword to Content Planner is a one-way move, not a copy: the
+  // keyword is removed from state.keywords (its data lives on via the
+  // content item's sourceKeywordSnapshot — see buildContentItemFromKeyword).
+  // It is deliberately NOT added to deletedPhrases — "sent to Content
+  // Planner" means "in progress," not "excluded from future CSV imports,"
+  // and those are different concepts that must stay on different lists.
   function sendKeywordToContentPlanner(kw) {
     if (!eligibleForContentPlanner(kw)) return;
     if (contentAlreadyExistsForKeyword(kw.phrase)) {
@@ -903,7 +936,10 @@
       return;
     }
     state.content.push(buildContentItemFromKeyword(kw));
+    state.keywords = state.keywords.filter(function (k) { return k.id !== kw.id; });
+    kwSelection.unselect(kw.id);
     saveContent();
+    saveKeywords();
     renderKeywordsTab();
     renderContentTab();
     showToast('Sent "' + kw.phrase + '" to Content Planner as a new idea.');
@@ -975,14 +1011,24 @@
     document.getElementById('bulk-send-dialog').showModal();
   }
 
+  // Same one-way-move semantics as sendKeywordToContentPlanner: every sent
+  // keyword is removed from state.keywords (not just linked), and none of
+  // them are added to deletedPhrases — see that function's comment.
   function sendSelectionToContentPlanner() {
     var items = kwSelection.getSelectedItems();
     var sent = 0, skipped = 0;
+    var sentIds = {};
     items.forEach(function (kw) {
       if (contentAlreadyExistsForKeyword(kw.phrase)) { skipped++; return; }
       state.content.push(buildContentItemFromKeyword(kw));
+      sentIds[kw.id] = true;
+      kwSelection.unselect(kw.id);
       sent++;
     });
+    if (sent > 0) {
+      state.keywords = state.keywords.filter(function (k) { return !sentIds[k.id]; });
+      saveKeywords();
+    }
     saveContent();
     renderKeywordsTab();
     renderContentTab();
@@ -1350,7 +1396,7 @@
   }
 
   function updateDeletedPhrasesButton() {
-    document.getElementById('kw-deleted-list-btn').textContent = 'Previously deleted (' + state.deletedPhrases.length + ')';
+    document.getElementById('kw-deleted-list-btn').textContent = 'Previously excluded (' + state.deletedPhrases.length + ')';
   }
 
   /* ---------- Keyword bulk cluster-tagging ---------- */
@@ -1398,7 +1444,7 @@
   function renderDeletedList() {
     var body = document.getElementById('deleted-list-body');
     if (state.deletedPhrases.length === 0) {
-      body.innerHTML = '<p class="empty-state">No previously deleted keywords.</p>';
+      body.innerHTML = '<p class="empty-state">No previously excluded keywords.</p>';
       return;
     }
     var sorted = state.deletedPhrases.slice().sort(function (a, b) { return a.phrase.localeCompare(b.phrase); });
@@ -1523,7 +1569,19 @@
     var deletedPhrasesSet = {};
     state.deletedPhrases.forEach(function (d) { deletedPhrasesSet[d.normPhrase] = true; });
 
-    var imported = 0, skippedDup = 0, skippedDeleted = 0, skippedBlank = 0;
+    // Keywords sent to Content Planner are removed from state.keywords (see
+    // sendKeywordToContentPlanner / sendSelectionToContentPlanner), so the
+    // existingPhrases check above no longer catches them. Without this,
+    // re-importing the same CSV could silently re-add a keyword the user
+    // already moved into active work. Checked as its own category, distinct
+    // from a plain duplicate or a deliberately-excluded phrase.
+    var contentPhrasesSet = {};
+    state.content.forEach(function (c) {
+      var norm = normalizePhrase(c.targetKeyword);
+      if (norm) contentPhrasesSet[norm] = true;
+    });
+
+    var imported = 0, skippedDup = 0, skippedDeleted = 0, skippedBlank = 0, skippedInContentPlanner = 0;
 
     for (var r = headerIdx + 1; r < rows.length; r++) {
       var row = rows[r];
@@ -1535,6 +1593,7 @@
       var normPhrase = phrase.toLowerCase();
       if (existingPhrases[normPhrase]) { skippedDup++; continue; }
       if (deletedPhrasesSet[normPhrase]) { skippedDeleted++; continue; }
+      if (contentPhrasesSet[normPhrase]) { skippedInContentPlanner++; continue; }
 
       var volumeRaw = idxVolume !== -1 ? (row[idxVolume] || '').trim() : '';
       var volumeNum = parseVolumeToNumber(volumeRaw);
@@ -1557,7 +1616,13 @@
     }
 
     saveKeywords();
-    return { imported: imported, skippedDup: skippedDup, skippedDeleted: skippedDeleted, skippedBlank: skippedBlank };
+    return {
+      imported: imported,
+      skippedDup: skippedDup,
+      skippedDeleted: skippedDeleted,
+      skippedBlank: skippedBlank,
+      skippedInContentPlanner: skippedInContentPlanner
+    };
   }
 
   function initCsvImport() {
@@ -1577,7 +1642,8 @@
         } else {
           var parts = [result.imported + ' keyword' + (result.imported === 1 ? '' : 's') + ' imported'];
           if (result.skippedDup) parts.push(result.skippedDup + ' skipped as duplicate' + (result.skippedDup === 1 ? '' : 's'));
-          if (result.skippedDeleted) parts.push(result.skippedDeleted + ' skipped as previously deleted');
+          if (result.skippedDeleted) parts.push(result.skippedDeleted + ' skipped as previously excluded');
+          if (result.skippedInContentPlanner) parts.push(result.skippedInContentPlanner + ' skipped — already in Content Planner');
           if (result.skippedBlank) parts.push(result.skippedBlank + ' skipped as blank');
           summaryEl.textContent = parts.join(', ') + '.';
           summaryEl.hidden = false;
@@ -1678,17 +1744,21 @@
   }
 
   // Renders the "From keyword: … — SERP: …" line linking back to the
-  // originating keyword (see buildContentItemFromKeyword's sourceKeywordId).
-  // Degrades gracefully to nothing if there's no source id, or the source
-  // keyword was since deleted — never throws.
+  // originating keyword. Tries a live lookup via sourceKeywordId first
+  // (covers old content items whose source keyword hasn't been sent/removed
+  // yet), then falls back to the sourceKeywordSnapshot recorded at send time
+  // (see buildKeywordSnapshot) since sending now removes the keyword from
+  // state.keywords. Degrades gracefully to nothing if neither resolves —
+  // never throws.
   function contentSourceKeywordLine(item) {
     var kw = item.sourceKeywordId ? findKeywordById(item.sourceKeywordId) : null;
-    if (!kw) return '';
-    var verdict = kw.serpVerdict ? serpVerdictLabel(kw.serpVerdict) : 'Not checked';
+    var source = kw || item.sourceKeywordSnapshot;
+    if (!source) return '';
+    var verdict = source.serpVerdict ? serpVerdictLabel(source.serpVerdict) : 'Not checked';
     return (
-      '<div class="content-card-source">From keyword: <span class="mono">' + escapeHtml(kw.phrase) + '</span>' +
+      '<div class="content-card-source">From keyword: <span class="mono">' + escapeHtml(source.phrase) + '</span>' +
       ' — SERP: ' + escapeHtml(verdict) +
-      (kw.note ? '<br><em>' + escapeHtml(kw.note) + '</em>' : '') +
+      (source.note ? '<br><em>' + escapeHtml(source.note) + '</em>' : '') +
       '</div>'
     );
   }
@@ -2075,6 +2145,60 @@
   }
 
   /* ===========================================================
+     One-time retroactive cleanup
+     =========================================================== */
+  // Before this session's changes, sending a keyword to Content Planner left
+  // it sitting in state.keywords too (linked via sourceKeywordId only, no
+  // snapshot). Users with existing data can have keywords that are already
+  // linked to a Content Planner item but still show up for triage in
+  // Keyword Planner. This runs once per load, right after state is loaded
+  // and before the first render: for every keyword whose (normalized)
+  // phrase matches an existing content item's targetKeyword, it backfills
+  // that item's sourceKeywordSnapshot (and sourceKeywordId if unset) from
+  // the live keyword, then removes the keyword from state.keywords — same
+  // end state as if the new send flow had created it. Cheap and naturally a
+  // no-op once there's no overlap left, so it's safe to run on every load
+  // without extra guard/flag complexity. Only shows a toast when it actually
+  // did something, so normal loads (the common case, once cleaned up once)
+  // stay silent.
+  function runRetroactiveKeywordCleanup() {
+    var contentByNormPhrase = {};
+    state.content.forEach(function (c) {
+      var norm = normalizePhrase(c.targetKeyword);
+      if (norm && !contentByNormPhrase[norm]) contentByNormPhrase[norm] = c;
+    });
+    if (Object.keys(contentByNormPhrase).length === 0) return;
+
+    var remainingKeywords = [];
+    var removedCount = 0;
+    var contentChanged = false;
+
+    state.keywords.forEach(function (k) {
+      var norm = normalizePhrase(k.phrase);
+      var match = norm ? contentByNormPhrase[norm] : null;
+      if (match) {
+        match.sourceKeywordSnapshot = buildKeywordSnapshot(k);
+        if (!match.sourceKeywordId) match.sourceKeywordId = k.id;
+        contentChanged = true;
+        removedCount++;
+      } else {
+        remainingKeywords.push(k);
+      }
+    });
+
+    if (removedCount > 0) {
+      state.keywords = remainingKeywords;
+      saveKeywords();
+      if (contentChanged) saveContent();
+      showToast(
+        removedCount + ' keyword' + (removedCount === 1 ? '' : 's') +
+        ' already in Content Planner ' + (removedCount === 1 ? 'was' : 'were') +
+        ' cleaned up from Keyword Planner.'
+      );
+    }
+  }
+
+  /* ===========================================================
      Multi-tab awareness
      =========================================================== */
   // Warns the user when this tab's copy of the data has gone stale because
@@ -2111,6 +2235,7 @@
      =========================================================== */
   function init() {
     loadState();
+    runRetroactiveKeywordCleanup();
     initTheme();
     initTabs();
     initKwForm();
