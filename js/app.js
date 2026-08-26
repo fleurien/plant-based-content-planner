@@ -306,11 +306,23 @@
   /* ---------------------------------------------------------
      Confirm dialog helper
      --------------------------------------------------------- */
-  function confirmAction(message, onConfirm) {
+  // opts: { label: string, danger: boolean }
+  // label defaults to "Delete" and danger defaults to true, matching this
+  // dialog's original delete-only behavior — pass both explicitly for any
+  // non-destructive confirmation (send, update, etc.) so the button never
+  // reads "Delete" (or shows red danger styling) for an action that isn't one.
+  function confirmAction(message, onConfirm, opts) {
+    opts = opts || {};
+    var label = opts.label || 'Delete';
+    var danger = opts.danger !== false;
+
     var dialog = document.getElementById('confirm-dialog');
     document.getElementById('confirm-dialog-body').textContent = message;
-    dialog.showModal();
     var okBtn = document.getElementById('confirm-ok-btn');
+    okBtn.textContent = label;
+    okBtn.classList.toggle('btn-danger', danger);
+    okBtn.classList.toggle('btn-primary', !danger);
+    dialog.showModal();
     var cancelBtn = document.getElementById('confirm-cancel-btn');
 
     function cleanup() {
@@ -606,7 +618,7 @@
             renderKeywordsTab();
             showToast('Keyword deleted.');
           });
-        });
+        }, { label: 'Delete', danger: true });
       } else if (action === 'send') {
         sendKeywordToContentPlanner(kw);
       } else if (action === 'serp-edit') {
@@ -706,7 +718,8 @@
         saveKeywords();
         renderKeywordsTab();
         showToast(updated + ' keyword' + (updated === 1 ? '' : 's') + ' updated to Low competition.');
-      }
+      },
+      { label: 'Set to Low', danger: false }
     );
   }
 
@@ -1029,7 +1042,7 @@
       kwSelectedIds = {};
       renderKeywordsTab();
       showToast(count + ' keyword' + (count === 1 ? '' : 's') + ' deleted.');
-    });
+    }, { label: 'Delete', danger: true });
   }
 
   function initKwSelection() {
@@ -1524,7 +1537,7 @@
             renderKeywordsTab();
             showToast('Content item deleted.');
           });
-        });
+        }, { label: 'Delete', danger: true });
       }
     });
   }
@@ -1584,7 +1597,7 @@
       renderContentTab();
       renderKeywordsTab(); // "already added" state may change
       showToast(count + ' content item' + (count === 1 ? '' : 's') + ' deleted.');
-    });
+    }, { label: 'Delete', danger: true });
   }
 
   function initContentSelection() {
@@ -1664,7 +1677,8 @@
           renderKeywordsTab();
           renderContentTab();
           showToast('Backup imported.');
-        }
+        },
+        { label: 'Replace data', danger: true }
       );
     };
     reader.readAsText(file);
