@@ -312,6 +312,14 @@
 <dialog id="deleted-list-dialog" class="app-dialog app-dialog--small" aria-labelledby="deleted-list-title">
   <h2 id="deleted-list-title">Previously excluded keywords</h2>
   <p class="field-hint">These phrases are skipped automatically on future CSV imports. Removing one from this list does not add it back to your keywords — it only allows it to be re-imported.</p>
+  <div class="selection-actions-row" id="deleted-list-selection-row" hidden>
+    <label class="checkbox-field">
+      <input type="checkbox" id="deleted-list-select-all" aria-label="Select all excluded phrases">
+      <span>Select all</span>
+    </label>
+    <span class="selection-count" id="deleted-list-selection-count" aria-live="polite">0 selected</span>
+    <button type="button" class="btn btn-bulk" id="deleted-list-bulk-remove-btn" disabled>Remove selected</button>
+  </div>
   <div class="deleted-list-scroll" id="deleted-list-body"></div>
   <div class="dialog-actions">
     <button type="button" class="btn btn-primary" id="deleted-list-close-btn">Close</button>

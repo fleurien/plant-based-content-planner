@@ -1440,41 +1440,118 @@
   }
 
   /* ---------- Previously deleted keywords dialog ---------- */
+  // Bulk selection here is deliberately NOT built on createBulkSelection
+  // above: that factory's bulkDelete() hardcodes a "Delete" / danger-styled
+  // confirm and an id-based visible/all-items split meant for filterable
+  // tables. This list has no filter (visible === all) and its bulk action
+  // is "forget this exclusion," not a destructive delete, so a small
+  // bespoke selection map (keyed by normPhrase, the list's natural key)
+  // stays truer to that semantic than bending the shared factory to fit.
+  var deletedListSelected = {};
+
+  function deletedListSelectedCount() {
+    return Object.keys(deletedListSelected).filter(function (k) { return deletedListSelected[k]; }).length;
+  }
+
+  function updateDeletedListSelectionUI() {
+    var count = deletedListSelectedCount();
+    var row = document.getElementById('deleted-list-selection-row');
+    row.hidden = state.deletedPhrases.length === 0;
+    document.getElementById('deleted-list-selection-count').textContent = count + ' selected';
+    document.getElementById('deleted-list-bulk-remove-btn').disabled = count === 0;
+
+    var selectAll = document.getElementById('deleted-list-select-all');
+    var total = state.deletedPhrases.length;
+    if (total === 0) {
+      selectAll.checked = false;
+      selectAll.indeterminate = false;
+    } else {
+      selectAll.checked = count === total;
+      selectAll.indeterminate = count > 0 && count < total;
+    }
+  }
 
   function renderDeletedList() {
     var body = document.getElementById('deleted-list-body');
     if (state.deletedPhrases.length === 0) {
       body.innerHTML = '<p class="empty-state">No previously excluded keywords.</p>';
+      updateDeletedListSelectionUI();
       return;
     }
     var sorted = state.deletedPhrases.slice().sort(function (a, b) { return a.phrase.localeCompare(b.phrase); });
     body.innerHTML = sorted.map(function (d) {
       return (
         '<div class="deleted-list-item">' +
+          '<input type="checkbox" class="row-checkbox" data-phrase="' + escapeHtml(d.normPhrase) + '"' +
+            (deletedListSelected[d.normPhrase] ? ' checked' : '') +
+            ' aria-label="Select ' + escapeHtml(d.phrase) + '">' +
           '<span class="deleted-list-phrase">' + escapeHtml(d.phrase) + '</span>' +
           '<button type="button" class="btn btn-small" data-action="restore" data-phrase="' + escapeHtml(d.normPhrase) + '">Remove from exclusion list</button>' +
         '</div>'
       );
     }).join('');
+    updateDeletedListSelectionUI();
+  }
+
+  function removeDeletedPhrases(normPhrases) {
+    var normSet = {};
+    normPhrases.forEach(function (n) { normSet[n] = true; });
+    state.deletedPhrases = state.deletedPhrases.filter(function (d) { return !normSet[d.normPhrase]; });
+    saveDeletedPhrases();
+  }
+
+  function bulkRemoveDeletedPhrases() {
+    var normPhrases = Object.keys(deletedListSelected).filter(function (k) { return deletedListSelected[k]; });
+    var count = normPhrases.length;
+    if (count === 0) return;
+    confirmAction(
+      'Remove ' + count + ' phrase' + (count === 1 ? '' : 's') + ' from the exclusion list? Future CSV imports will no longer skip them.',
+      function () {
+        removeDeletedPhrases(normPhrases);
+        deletedListSelected = {};
+        renderDeletedList();
+        updateDeletedPhrasesButton();
+        showToast(count + ' phrase' + (count === 1 ? '' : 's') + ' removed from the exclusion list.');
+      },
+      { label: 'Remove', danger: false }
+    );
   }
 
   function initDeletedPhrasesDialog() {
     document.getElementById('kw-deleted-list-btn').addEventListener('click', function () {
+      deletedListSelected = {};
       renderDeletedList();
       document.getElementById('deleted-list-dialog').showModal();
     });
     document.getElementById('deleted-list-close-btn').addEventListener('click', function () {
       document.getElementById('deleted-list-dialog').close();
     });
+    document.getElementById('deleted-list-select-all').addEventListener('change', function (e) {
+      var checked = e.target.checked;
+      deletedListSelected = {};
+      if (checked) {
+        state.deletedPhrases.forEach(function (d) { deletedListSelected[d.normPhrase] = true; });
+      }
+      renderDeletedList();
+    });
+    document.getElementById('deleted-list-bulk-remove-btn').addEventListener('click', bulkRemoveDeletedPhrases);
     document.getElementById('deleted-list-body').addEventListener('click', function (e) {
       var btn = e.target.closest('button[data-action="restore"]');
       if (!btn) return;
       var norm = btn.getAttribute('data-phrase');
-      state.deletedPhrases = state.deletedPhrases.filter(function (d) { return d.normPhrase !== norm; });
-      saveDeletedPhrases();
+      delete deletedListSelected[norm];
+      removeDeletedPhrases([norm]);
       renderDeletedList();
       updateDeletedPhrasesButton();
       showToast('Removed from exclusion list.');
+    });
+    document.getElementById('deleted-list-body').addEventListener('change', function (e) {
+      var cb = e.target.closest('.row-checkbox');
+      if (!cb) return;
+      var norm = cb.getAttribute('data-phrase');
+      if (cb.checked) deletedListSelected[norm] = true;
+      else delete deletedListSelected[norm];
+      updateDeletedListSelectionUI();
     });
   }
 
