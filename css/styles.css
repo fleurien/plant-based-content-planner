@@ -630,26 +630,111 @@ main {
   margin-top: 0.6rem;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.55rem;
 }
 .content-card.stale { border-color: var(--skip); background: var(--skip-bg); }
 .content-card-top {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
 }
-.content-card-title { font-family: var(--font-heading); font-weight: 600; font-size: 1.05rem; }
-.content-card-kw { font-family: var(--font-mono); font-size: 0.82rem; color: var(--ink-soft); }
-.content-card-meta {
+
+/* Title: styled to look like the old bold read-only title text until the
+   user interacts with it — borderless/transparent at rest, gains a visible
+   border and surface once focused or hovered so it still reads as an
+   editable control. */
+.content-card-title-wrap {
   display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  font-size: 0.82rem;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.content-card-title-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-heading);
+  font-weight: 600;
+  font-size: 1.05rem;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 0.25em 0.45em;
+  margin: -0.25em -0.45em;
+}
+.content-card-title-input::placeholder { color: var(--ink-soft); font-weight: 500; }
+.content-card-title-input:hover { border-color: var(--border); }
+.content-card-title-input:focus {
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+}
+
+/* Status: a native <select> styled to keep the same pill look the card
+   used to show read-only, with a custom chevron since appearance: none
+   drops the native one. */
+.status-pill-select {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25em 1.7em 0.25em 0.7em;
+  border-radius: 999px;
+  background-color: var(--bg-alt);
+  border: 1px solid var(--border-strong);
+  color: var(--ink);
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%), linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%);
+  background-position: right 0.95em top 55%, right 0.7em top 55%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.status-pill-select:hover { filter: brightness(0.97); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .status-pill-select:hover { filter: brightness(1.15); }
+}
+:root[data-theme="dark"] .status-pill-select:hover { filter: brightness(1.15); }
+
+/* Compact grid for the small fields (target keyword, cluster, the three
+   dates) — full-width fields (title, notes) sit outside this grid. Adapted
+   from the old modal's field-row layout. */
+.content-card-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.55rem 0.7rem;
+}
+.cc-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.cc-field-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--ink-soft);
 }
-.content-card-notes { font-size: 0.88rem; color: var(--ink); white-space: pre-wrap; }
+.cc-field input, .cc-field textarea {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  padding: 0.35em 0.55em;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: var(--ink);
+  width: 100%;
+}
+.cc-field-kw input { font-family: var(--font-mono); }
+.cc-field-notes textarea { resize: vertical; min-height: 2.6em; }
+
+.content-card-freshness { font-size: 0.8rem; color: var(--ink-soft); }
+
 .content-card-source {
   font-size: 0.82rem;
   color: var(--ink-soft);
@@ -659,14 +744,6 @@ main {
   padding: 0.45em 0.75em;
 }
 .content-card-source em { color: var(--ink); font-style: italic; }
-.status-pill {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  padding: 0.2em 0.6em;
-  border-radius: 999px;
-  background: var(--bg-alt);
-  border: 1px solid var(--border-strong);
-}
 
 /* ---------- SERP Review ---------- */
 .app-dialog--review { max-width: 640px; width: min(94vw, 640px); }

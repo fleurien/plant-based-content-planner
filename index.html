@@ -173,6 +173,10 @@
 
   <div id="content-list" class="cluster-list"></div>
   <p class="empty-state" id="content-empty" hidden>No content items yet. Add one, or send a keyword over from the Keyword Planner tab.</p>
+
+  <!-- Shared by every inline content-card field (see js/app.js contentCard()). -->
+  <datalist id="keyword-suggestions"></datalist>
+  <datalist id="cluster-suggestions-content"></datalist>
 </section>
 
 </main>
@@ -228,70 +232,6 @@
     <div class="dialog-actions">
       <button type="button" class="btn" id="kw-cancel-btn">Cancel</button>
       <button type="submit" class="btn btn-primary" id="kw-save-btn">Save keyword</button>
-    </div>
-  </form>
-</dialog>
-
-<!-- ==================== CONTENT ADD/EDIT DIALOG ==================== -->
-<dialog id="content-dialog" class="app-dialog" aria-labelledby="content-dialog-title">
-  <form method="dialog" id="content-form" novalidate>
-    <h2 id="content-dialog-title">Add content item</h2>
-    <input type="hidden" id="content-id">
-
-    <div class="field">
-      <label for="content-title">Title (working title) <span class="req">*</span></label>
-      <input type="text" id="content-title" required autocomplete="off">
-    </div>
-
-    <div class="field">
-      <label for="content-keyword">Target keyword</label>
-      <input type="text" id="content-keyword" list="keyword-suggestions" autocomplete="off" placeholder="Pick from tracked keywords or type your own">
-      <datalist id="keyword-suggestions"></datalist>
-    </div>
-
-    <div class="field-row">
-      <div class="field">
-        <label for="content-cluster">Cluster</label>
-        <input type="text" id="content-cluster" list="cluster-suggestions-content" autocomplete="off">
-        <datalist id="cluster-suggestions-content"></datalist>
-      </div>
-      <div class="field">
-        <label for="content-status">Status</label>
-        <select id="content-status">
-          <option value="Idea">Idea</option>
-          <option value="Tested">Tested</option>
-          <option value="Photographed">Photographed</option>
-          <option value="Drafted">Drafted</option>
-          <option value="Published (v1)">Published (v1)</option>
-          <option value="Refined (v2+)">Refined (v2+)</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="field-row">
-      <div class="field">
-        <label for="content-target-date">Target publish date</label>
-        <input type="date" id="content-target-date">
-      </div>
-      <div class="field">
-        <label for="content-published-date">Published date</label>
-        <input type="date" id="content-published-date">
-      </div>
-      <div class="field">
-        <label for="content-updated-date">Last updated date</label>
-        <input type="date" id="content-updated-date">
-      </div>
-    </div>
-    <p class="field-hint">Published date auto-fills the first time status reaches “Published (v1)”. Last updated date auto-fills each time status reaches “Refined (v2+)”. Both can be overridden manually.</p>
-
-    <div class="field">
-      <label for="content-notes">Notes</label>
-      <textarea id="content-notes" rows="3"></textarea>
-    </div>
-
-    <div class="dialog-actions">
-      <button type="button" class="btn" id="content-cancel-btn">Cancel</button>
-      <button type="submit" class="btn btn-primary" id="content-save-btn">Save content item</button>
     </div>
   </form>
 </dialog>

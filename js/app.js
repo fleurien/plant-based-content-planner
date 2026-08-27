@@ -1746,7 +1746,7 @@
     bulkDeleteBtnId: 'content-bulk-delete-btn',
     getVisibleItems: function () { return getVisibleContentItems(); },
     getAllItems: function () { return state.content; },
-    getItemLabel: function (c) { return c.title; },
+    getItemLabel: function (c) { return c.title || 'Untitled idea'; },
     nounSingular: 'content item',
     nounPlural: 'content items',
     extraDeleteWarning: '', // no tombstone list here — not sourced from a re-importable CSV
@@ -1840,36 +1840,66 @@
     );
   }
 
+  // Every field on a content card is edited inline (no modal — see
+  // commitContentField() and initContentInlineFields() below). Each input
+  // carries data-field (which state property it writes to) and data-id
+  // (which content item), so the delegated blur/change handlers can commit
+  // straight to state without needing to walk back up to the card wrapper.
   function contentCard(item) {
     var stale = isStale(item);
     var months = monthsSince(freshnessDate(item));
     var freshnessLabel = months === null ? 'No update recorded' : (months + ' month' + (months === 1 ? '' : 's') + ' since last update');
+    var statusOptions = STATUS_STAGES.map(function (s) {
+      return '<option value="' + escapeHtml(s) + '"' + (item.status === s ? ' selected' : '') + '>' + escapeHtml(s) + '</option>';
+    }).join('');
     return (
       '<div class="content-card' + (stale ? ' stale' : '') + '" data-id="' + item.id + '">' +
         '<div class="content-card-top">' +
           '<div class="card-checkbox-wrap">' +
             '<input type="checkbox" class="row-checkbox" data-id="' + item.id + '"' +
               (contentSelection.isSelected(item.id) ? ' checked' : '') +
-              ' aria-label="Select ' + escapeHtml(item.title) + '">' +
+              ' aria-label="Select ' + escapeHtml(item.title || 'Untitled idea') + '">' +
           '</div>' +
-          '<div>' +
-            '<div class="content-card-title">' + escapeHtml(item.title) +
-              (stale ? '<span class="badge badge-stale">Needs refresh</span>' : '') +
-            '</div>' +
-            (item.targetKeyword ? '<div class="content-card-kw">Target: ' + escapeHtml(item.targetKeyword) + '</div>' : '') +
+          '<div class="content-card-title-wrap">' +
+            '<input type="text" class="content-card-title-input" data-field="title" data-id="' + item.id + '" ' +
+              'value="' + escapeHtml(item.title) + '" placeholder="Untitled idea" aria-label="Title">' +
+            (stale ? '<span class="badge badge-stale">Needs refresh</span>' : '') +
           '</div>' +
-          '<span class="status-pill">' + escapeHtml(item.status) + '</span>' +
+          '<select class="status-pill-select" data-field="status" data-id="' + item.id + '" aria-label="Status">' +
+            statusOptions +
+          '</select>' +
         '</div>' +
         contentSourceKeywordLine(item) +
-        '<div class="content-card-meta">' +
-          '<span>Target publish: ' + escapeHtml(item.targetPublishDate || '—') + '</span>' +
-          '<span>Published: ' + escapeHtml(item.publishedDate || '—') + '</span>' +
-          '<span>Last updated: ' + escapeHtml(item.lastUpdatedDate || '—') + '</span>' +
-          '<span>' + freshnessLabel + '</span>' +
+        '<div class="content-card-fields">' +
+          '<label class="cc-field cc-field-kw">' +
+            '<span class="cc-field-label">Target keyword</span>' +
+            '<input type="text" class="mono" data-field="targetKeyword" data-id="' + item.id + '" ' +
+              'value="' + escapeHtml(item.targetKeyword) + '" list="keyword-suggestions" autocomplete="off">' +
+          '</label>' +
+          '<label class="cc-field cc-field-cluster">' +
+            '<span class="cc-field-label">Cluster</span>' +
+            '<input type="text" data-field="cluster" data-id="' + item.id + '" ' +
+              'value="' + escapeHtml(item.cluster) + '" list="cluster-suggestions-content" autocomplete="off" placeholder="Uncategorized">' +
+          '</label>' +
+          '<label class="cc-field">' +
+            '<span class="cc-field-label">Target publish</span>' +
+            '<input type="date" data-field="targetPublishDate" data-id="' + item.id + '" value="' + escapeHtml(item.targetPublishDate || '') + '">' +
+          '</label>' +
+          '<label class="cc-field">' +
+            '<span class="cc-field-label">Published</span>' +
+            '<input type="date" data-field="publishedDate" data-id="' + item.id + '" value="' + escapeHtml(item.publishedDate || '') + '">' +
+          '</label>' +
+          '<label class="cc-field">' +
+            '<span class="cc-field-label">Last updated</span>' +
+            '<input type="date" data-field="lastUpdatedDate" data-id="' + item.id + '" value="' + escapeHtml(item.lastUpdatedDate || '') + '">' +
+          '</label>' +
         '</div>' +
-        (item.notes ? '<div class="content-card-notes">' + escapeHtml(item.notes) + '</div>' : '') +
+        '<label class="cc-field cc-field-notes">' +
+          '<span class="cc-field-label">Notes</span>' +
+          '<textarea data-field="notes" data-id="' + item.id + '" rows="2" placeholder="Notes…">' + escapeHtml(item.notes) + '</textarea>' +
+        '</label>' +
+        '<div class="content-card-freshness">' + freshnessLabel + '</div>' +
         '<div class="row-actions">' +
-          '<button type="button" class="btn btn-small" data-action="edit" data-id="' + item.id + '">Edit</button>' +
           '<button type="button" class="btn btn-small btn-danger" data-action="delete" data-id="' + item.id + '">Delete</button>' +
         '</div>' +
       '</div>'
@@ -1933,94 +1963,143 @@
     contentSelection.updateSelectionUI();
   }
 
-  /* ---------- Content add/edit dialog ---------- */
-  var contentDialogPrevStatus = null;
+  /* ---------- Content inline field editing ----------
+     Replaces the old "Edit content item" modal entirely: every field on a
+     content card (see contentCard() above) is a live input/select/textarea
+     that commits straight to state.content through commitContentField(),
+     triggered by the delegated listeners in initContentInlineFields()
+     below. No Save button, no dialog — see the module doc comment at the
+     top of CONTENT PLANNER for the trigger-per-field-type rules.
 
-  function openContentDialog(item) {
-    var dialog = document.getElementById('content-dialog');
-    document.getElementById('content-dialog-title').textContent = item ? 'Edit content item' : 'Add content item';
-    document.getElementById('content-id').value = item ? item.id : '';
-    document.getElementById('content-title').value = item ? item.title : '';
-    document.getElementById('content-keyword').value = item ? (item.targetKeyword || '') : '';
-    document.getElementById('content-cluster').value = item ? (item.cluster || '') : '';
-    document.getElementById('content-status').value = item ? item.status : 'Idea';
-    document.getElementById('content-target-date').value = item ? (item.targetPublishDate || '') : '';
-    document.getElementById('content-published-date').value = item ? (item.publishedDate || '') : '';
-    document.getElementById('content-updated-date').value = item ? (item.lastUpdatedDate || '') : '';
-    document.getElementById('content-notes').value = item ? (item.notes || '') : '';
-    contentDialogPrevStatus = item ? item.status : null;
-    refreshClusterDatalists();
-    refreshKeywordDatalist();
-    dialog.showModal();
-    document.getElementById('content-title').focus();
-  }
+     Critical: the Published/Last-updated auto-fill-on-status-transition
+     logic here is carried over unchanged from the old modal's submit
+     handler (still: only fills Published date if it's currently empty and
+     the previous status wasn't already "Published (v1)"; always overwrites
+     Last updated the moment status transitions into "Refined (v2+)"). Only
+     its trigger moved, from a dialog's submit event to the inline status
+     <select>'s change event — the rule itself was not reimplemented. */
+  function commitContentField(id, field, rawValue) {
+    var item = state.content.find(function (c) { return c.id === id; });
+    if (!item) return;
 
-  function initContentForm() {
-    document.getElementById('content-add-btn').addEventListener('click', function () { openContentDialog(null); });
-    document.getElementById('content-cancel-btn').addEventListener('click', function () {
-      document.getElementById('content-dialog').close();
-    });
-
-    document.getElementById('content-form').addEventListener('submit', function (e) {
-      e.preventDefault();
-      var title = document.getElementById('content-title').value.trim();
-      if (!title) { document.getElementById('content-title').focus(); return; }
-
-      var id = document.getElementById('content-id').value;
-      var targetKeyword = document.getElementById('content-keyword').value.trim();
-      var cluster = document.getElementById('content-cluster').value.trim();
-      var status = document.getElementById('content-status').value;
-      var targetPublishDate = document.getElementById('content-target-date').value;
-      var publishedDate = document.getElementById('content-published-date').value;
-      var lastUpdatedDate = document.getElementById('content-updated-date').value;
-      var notes = document.getElementById('content-notes').value.trim();
-
-      // Auto-fill dates on status transition, per spec.
-      var prevStatus = contentDialogPrevStatus;
-      if (status === 'Published (v1)' && prevStatus !== 'Published (v1)' && !publishedDate) {
-        publishedDate = todayISO();
+    if (field === 'status') {
+      var prevStatus = item.status;
+      item.status = rawValue;
+      // Auto-fill dates on status transition — unchanged rule, see doc
+      // comment above.
+      if (rawValue === 'Published (v1)' && prevStatus !== 'Published (v1)' && !item.publishedDate) {
+        item.publishedDate = todayISO();
       }
-      if (status === 'Refined (v2+)' && prevStatus !== 'Refined (v2+)') {
-        lastUpdatedDate = todayISO();
-      }
-
-      if (id) {
-        var existing = state.content.find(function (c) { return c.id === id; });
-        if (existing) {
-          existing.title = title;
-          existing.targetKeyword = targetKeyword;
-          existing.cluster = cluster;
-          existing.status = status;
-          existing.targetPublishDate = targetPublishDate;
-          existing.publishedDate = publishedDate;
-          existing.lastUpdatedDate = lastUpdatedDate;
-          existing.notes = notes;
-        }
-        showToast('Content item updated.');
-      } else {
-        var newContentId = uid();
-        state.content.push({
-          id: newContentId,
-          title: title,
-          targetKeyword: targetKeyword,
-          cluster: cluster,
-          status: status,
-          targetPublishDate: targetPublishDate,
-          publishedDate: publishedDate,
-          lastUpdatedDate: lastUpdatedDate,
-          notes: notes,
-          createdAt: todayISO()
-        });
-        showToast('Content item added.');
+      if (rawValue === 'Refined (v2+)' && prevStatus !== 'Refined (v2+)') {
+        item.lastUpdatedDate = todayISO();
       }
       saveContent();
-      document.getElementById('content-dialog').close();
+      // Status can flip the stale flag/badge and the "need refresh" count,
+      // and may have just auto-filled a date field — re-render the whole
+      // tab so all of that stays in sync (matches the old modal's save,
+      // which always re-rendered the full tab too).
       renderContentTab();
-      renderKeywordsTab(); // "already added" state may change
-      if (!id && typeof newContentId !== 'undefined') {
-        flashElement(document.querySelector('.content-card[data-id="' + newContentId + '"]'));
-      }
+      return;
+    }
+
+    if (field === 'cluster') {
+      item.cluster = rawValue.trim();
+      saveContent();
+      // Moves the card to a different cluster accordion group — requires a
+      // full re-render of the grouped list, per spec.
+      renderContentTab();
+      return;
+    }
+
+    if (field === 'publishedDate' || field === 'lastUpdatedDate') {
+      item[field] = rawValue;
+      saveContent();
+      // Both feed freshnessDate()/isStale() — re-render so the stale
+      // badge/card styling and the "need refresh" count stay accurate.
+      renderContentTab();
+      return;
+    }
+
+    if (field === 'targetPublishDate') {
+      // Doesn't feed staleness or grouping — no re-render needed.
+      item.targetPublishDate = rawValue;
+      saveContent();
+      return;
+    }
+
+    if (field === 'targetKeyword') {
+      item.targetKeyword = rawValue.trim();
+      saveContent();
+      // Doesn't touch this tab's own DOM, so no renderContentTab() (which
+      // would otherwise steal focus mid-tabbing between a card's fields on
+      // blur) — but the Keyword Planner's "Already added" badge depends on
+      // this value, same as the old modal's save.
+      renderKeywordsTab();
+      return;
+    }
+
+    if (field === 'title' || field === 'notes') {
+      item[field] = rawValue.trim();
+      saveContent();
+      return;
+    }
+  }
+
+  // Delegated commit handlers for every inline field on every content card.
+  // Text-like fields (title, target keyword, cluster, notes) commit on
+  // blur/focusout — not on every keystroke, to avoid a save + possible
+  // full re-render on each character typed. Select and date fields commit
+  // immediately on change, matching how dropdowns/date controls behave
+  // elsewhere in this app. focusout is used instead of blur because blur
+  // doesn't bubble and this is a single delegated listener on the list
+  // container, not one listener per field.
+  function initContentInlineFields() {
+    var container = document.getElementById('content-list');
+
+    container.addEventListener('focusout', function (e) {
+      var el = e.target;
+      if (!el || !el.matches) return;
+      if (!el.matches('input[data-field="title"], input[data-field="targetKeyword"], input[data-field="cluster"], textarea[data-field="notes"]')) return;
+      commitContentField(el.getAttribute('data-id'), el.getAttribute('data-field'), el.value);
     });
+
+    container.addEventListener('change', function (e) {
+      var el = e.target;
+      if (!el || !el.matches) return;
+      if (!el.matches('select[data-field="status"], input[type="date"][data-field]')) return;
+      commitContentField(el.getAttribute('data-id'), el.getAttribute('data-field'), el.value);
+    });
+  }
+
+  // "+ Add content item" creates the item immediately (no dialog/required
+  // fields — an empty title is fine transiently) and focuses its Title
+  // input so the user can start typing right away. Starts with an empty
+  // cluster, so it groups under "Uncategorized" like any other item with
+  // no cluster set.
+  function addInlineContentItem() {
+    var newId = uid();
+    state.content.push({
+      id: newId,
+      title: '',
+      targetKeyword: '',
+      cluster: '',
+      status: 'Idea',
+      targetPublishDate: '',
+      publishedDate: '',
+      lastUpdatedDate: '',
+      notes: '',
+      createdAt: todayISO()
+    });
+    saveContent();
+    renderContentTab();
+    var cardEl = document.querySelector('.content-card[data-id="' + newId + '"]');
+    flashElement(cardEl);
+    var titleInput = cardEl && cardEl.querySelector('.content-card-title-input');
+    if (titleInput) titleInput.focus();
+  }
+
+  function initContentAddButton() {
+    document.getElementById('content-add-btn').addEventListener('click', addInlineContentItem);
   }
 
   function initContentListActions() {
@@ -2032,10 +2111,8 @@
       var item = state.content.find(function (c) { return c.id === id; });
       if (!item) return;
 
-      if (action === 'edit') {
-        openContentDialog(item);
-      } else if (action === 'delete') {
-        confirmAction('Delete the content item "' + item.title + '"? This cannot be undone.', function () {
+      if (action === 'delete') {
+        confirmAction('Delete the content item "' + (item.title || 'Untitled idea') + '"? This cannot be undone.', function () {
           var cardEl = document.querySelector('.content-card[data-id="' + id + '"]');
           removeWithFade(cardEl, 'card-removing', function () {
             state.content = state.content.filter(function (c) { return c.id !== id; });
@@ -2325,7 +2402,8 @@
     initKwSelectionActions();
     initSerpReview();
     initSerpPopover();
-    initContentForm();
+    initContentAddButton();
+    initContentInlineFields();
     initContentListActions();
     initContentFilters();
     contentSelection.init();
