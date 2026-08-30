@@ -407,9 +407,12 @@
     // filter never treats hidden rows as part of "all"). Called after every
     // selection change AND every filter-triggered re-render, so it can never
     // go stale the way the Keyword tab's copy used to.
-    function updateSelectAllState() {
+    // visible is optional — pass it when the caller already has the current
+    // getVisibleItems() result (see updateSelectionUI) so it isn't recomputed;
+    // standalone callers get a fresh list.
+    function updateSelectAllState(visible) {
+      visible = visible || config.getVisibleItems();
       var box = document.getElementById(config.selectAllId);
-      var visible = config.getVisibleItems();
       if (visible.length === 0) { box.checked = false; box.indeterminate = false; return; }
       var selectedCount = visible.filter(function (item) { return selected[item.id]; }).length;
       box.checked = selectedCount === visible.length;
@@ -420,16 +423,18 @@
     // shown)" qualifier whenever some selected ids fall outside the
     // currently-visible (filtered) set — selection persists across filter
     // changes, so this keeps that fact visible instead of silently hiding
-    // it, without it reading as a warning (informational only).
-    function updateSelectionCount(idList) {
+    // it, without it reading as a warning (informational only). visible is
+    // optional, same rationale as updateSelectAllState above.
+    function updateSelectionCount(idList, visible) {
       var countEl = document.getElementById(config.selectionCountId);
       var count = idList.length;
       if (count === 0) {
         countEl.textContent = '0 selected';
         return;
       }
+      visible = visible || config.getVisibleItems();
       var visibleIds = {};
-      config.getVisibleItems().forEach(function (item) { visibleIds[item.id] = true; });
+      visible.forEach(function (item) { visibleIds[item.id] = true; });
       var notShown = idList.filter(function (id) { return !visibleIds[id]; }).length;
       if (notShown > 0) {
         countEl.innerHTML = count + ' selected <span class="selection-count-qualifier">(' + notShown + ' not shown)</span>';
@@ -441,6 +446,7 @@
     function updateSelectionUI() {
       var idList = selectedIdList();
       var count = idList.length;
+      var visible = config.getVisibleItems();
       // Default: row only shows once something is selected (Content Planner
       // tab's behavior, unchanged). A controller can instead pass
       // showRowWhen(count) to keep its row always present (Keyword Planner
@@ -448,7 +454,7 @@
       document.getElementById(config.selectionRowId).hidden = config.showRowWhen
         ? !config.showRowWhen(count)
         : count === 0;
-      updateSelectionCount(idList);
+      updateSelectionCount(idList, visible);
       document.getElementById(config.bulkDeleteBtnId).textContent = 'Delete ' + count + ' selected';
       // When a controller's row stays always-visible with nothing selected,
       // its action buttons communicate that state by disabling instead —
@@ -461,7 +467,7 @@
           if (el) el.disabled = shouldDisable;
         });
       }
-      updateSelectAllState();
+      updateSelectAllState(visible);
       if (config.afterSelectionUIUpdate) config.afterSelectionUIUpdate(count);
     }
 
@@ -522,6 +528,52 @@
       updateSelectAllState: updateSelectAllState,
       clear: clear
     };
+  }
+
+  // Shared "bulk set cluster" dialog, used identically by the Keyword and
+  // Content Planner tabs (see createBulkSelection above for why shared
+  // factories live here instead of being copy-pasted per tab).
+  // config: {
+  //   dialogId, descId, inputId, formId, cancelBtnId,
+  //   getSelectedItems: () => currently-selected items (id + cluster fields),
+  //   nounSingular, nounPlural: strings for the description/toast wording,
+  //   save: () => persists the backing array,
+  //   rerender: () => re-renders the tab
+  // }
+  function createBulkClusterDialog(config) {
+    function open() {
+      var items = config.getSelectedItems();
+      if (items.length === 0) return;
+      document.getElementById(config.descId).textContent =
+        'Sets the cluster for ' + items.length + ' selected ' +
+        (items.length === 1 ? config.nounSingular : config.nounPlural) + '.';
+      var input = document.getElementById(config.inputId);
+      input.value = '';
+      refreshClusterDatalists();
+      document.getElementById(config.dialogId).showModal();
+      input.focus();
+    }
+
+    function init() {
+      document.getElementById(config.cancelBtnId).addEventListener('click', function () {
+        document.getElementById(config.dialogId).close();
+      });
+      document.getElementById(config.formId).addEventListener('submit', function (e) {
+        e.preventDefault();
+        var input = document.getElementById(config.inputId);
+        var cluster = input.value.trim();
+        if (!cluster) { input.focus(); return; }
+        var items = config.getSelectedItems();
+        items.forEach(function (item) { item.cluster = cluster; });
+        config.save();
+        document.getElementById(config.dialogId).close();
+        config.rerender();
+        showToast(items.length + ' ' + (items.length === 1 ? config.nounSingular : config.nounPlural) +
+          ' set to cluster "' + cluster + '".');
+      });
+    }
+
+    return { open: open, init: init };
   }
 
   /* ===========================================================
@@ -618,25 +670,6 @@
     return '<button type="button" class="badge badge-btn ' + serpBadgeClass(v) + '" ' +
       'data-action="serp-edit" data-id="' + kw.id + '" aria-haspopup="true" aria-expanded="false">' +
       (v ? serpVerdictLabel(v) : 'Not checked') + '</button>';
-  }
-
-  // Keywords eligible for SERP review: a Go/Maybe decision with no verdict
-  // yet recorded. Sorted Go before Maybe, then by the same volume-estimate
-  // comparator the "Sort by volume" (High -> Low) control uses. Computed
-  // fresh on every call so a review session always reflects live state.
-  function serpReviewQueue() {
-    var list = state.keywords.filter(function (k) {
-      var d = computeDecision(k);
-      return (d === 'Go' || d === 'Maybe') && !k.serpVerdict;
-    });
-    list.sort(function (a, b) {
-      var da = computeDecision(a), db = computeDecision(b);
-      if (da !== db) return da === 'Go' ? -1 : 1;
-      var av = parseVolumeToNumber(a.volume); av = av === null ? -1 : av;
-      var bv = parseVolumeToNumber(b.volume); bv = bv === null ? -1 : bv;
-      return bv - av;
-    });
-    return list;
   }
 
   function volumeDisplay(kw) {
@@ -741,14 +774,16 @@
     kwDecisionCache = {};
     state.keywords.forEach(function (k) { kwDecisionCache[k.id] = computeDecisionRaw(k); });
 
-    renderKwCounts();
-    renderKwTable();
-    refreshClusterDatalists();
-    refreshKeywordDatalist();
-    kwSelection.updateSelectionUI();
-    updateDeletedPhrasesButton();
-
-    kwDecisionCache = null;
+    try {
+      renderKwCounts();
+      renderKwTable();
+      refreshClusterDatalists();
+      refreshKeywordDatalist();
+      kwSelection.updateSelectionUI();
+      updateDeletedPhrasesButton();
+    } finally {
+      kwDecisionCache = null;
+    }
   }
 
   /* ---------- Keyword add/edit dialog ---------- */
@@ -1079,7 +1114,7 @@
   }
 
   function initKwSelectionActions() {
-    bindSelectionAction('kw-bulk-set-cluster-btn', openKwBulkClusterDialog);
+    bindSelectionAction('kw-bulk-set-cluster-btn', kwBulkClusterDialog.open);
     bindSelectionAction('kw-sel-competition-btn', bulkSetSelectedCompetitionToLow);
     bindSelectionAction('kw-sel-volume-btn', bulkSetSelectedVolumeToZero);
     bindSelectionAction('kw-sel-send-btn', openSelectionSendDialog);
@@ -1151,9 +1186,6 @@
   // passed in, any decision (including already-Skip or already-verdicted
   // ones), ordered Go-then-Maybe-then-rest, and by volume (High -> Low)
   // within each group — reusing the same volume comparator as elsewhere.
-  // Separate from the old serpReviewQueue() below, which filters to
-  // unverdicted Go/Maybe keywords app-wide and is no longer the entry point
-  // for SERP Review (kept as-is in case anything else needs that logic).
   function serpReviewQueueForSelection(items) {
     var list = items.slice();
     list.sort(function (a, b) {
@@ -1404,40 +1436,21 @@
   // every new keyword has an empty cluster, and tagging them one-by-one via
   // the Edit dialog isn't realistic at 1700+ rows. Reuses the same cluster
   // autocomplete datalist ("cluster-suggestions") as the single-keyword Edit
-  // form, populated by refreshClusterDatalists().
-
-  function openKwBulkClusterDialog() {
-    var items = kwSelection.getSelectedItems();
-    if (items.length === 0) return;
-    document.getElementById('kw-bulk-cluster-desc').textContent =
-      'Sets the cluster for ' + items.length + ' selected keyword' + (items.length === 1 ? '' : 's') + '.';
-    var input = document.getElementById('kw-bulk-cluster-input');
-    input.value = '';
-    refreshClusterDatalists();
-    document.getElementById('kw-bulk-cluster-dialog').showModal();
-    input.focus();
-  }
-
-  function initKwBulkCluster() {
-    // The "Set cluster for selected" button itself is bound in
-    // initKwSelectionActions (shared with its mobile popover counterpart) —
-    // this only wires the dialog that button opens.
-    document.getElementById('kw-bulk-cluster-cancel-btn').addEventListener('click', function () {
-      document.getElementById('kw-bulk-cluster-dialog').close();
-    });
-    document.getElementById('kw-bulk-cluster-form').addEventListener('submit', function (e) {
-      e.preventDefault();
-      var input = document.getElementById('kw-bulk-cluster-input');
-      var cluster = input.value.trim();
-      if (!cluster) { input.focus(); return; }
-      var items = kwSelection.getSelectedItems();
-      items.forEach(function (k) { k.cluster = cluster; });
-      saveKeywords();
-      document.getElementById('kw-bulk-cluster-dialog').close();
-      renderKeywordsTab();
-      showToast(items.length + ' keyword' + (items.length === 1 ? '' : 's') + ' set to cluster "' + cluster + '".');
-    });
-  }
+  // form, populated by refreshClusterDatalists(). The "Set cluster for
+  // selected" button itself is bound in initKwSelectionActions (shared with
+  // its mobile popover counterpart) — this only wires the dialog it opens.
+  var kwBulkClusterDialog = createBulkClusterDialog({
+    dialogId: 'kw-bulk-cluster-dialog',
+    descId: 'kw-bulk-cluster-desc',
+    inputId: 'kw-bulk-cluster-input',
+    formId: 'kw-bulk-cluster-form',
+    cancelBtnId: 'kw-bulk-cluster-cancel-btn',
+    getSelectedItems: function () { return kwSelection.getSelectedItems(); },
+    nounSingular: 'keyword',
+    nounPlural: 'keywords',
+    save: saveKeywords,
+    rerender: renderKeywordsTab
+  });
 
   /* ---------- Previously deleted keywords dialog ---------- */
   // Bulk selection here is deliberately NOT built on createBulkSelection
@@ -1738,6 +1751,13 @@
 
   var contentFilters = { refreshOnly: false };
 
+  // Cluster names the user has manually collapsed — renderContentList()
+  // rebuilds every <details> from scratch on nearly every card edit now
+  // (inline editing triggers far more re-renders than the old modal ever
+  // did), so without remembering this a collapsed section would snap back
+  // open after the next status/date/cluster change.
+  var collapsedContentClusters = {};
+
   var contentSelection = createBulkSelection({
     selectAllId: 'content-select-all',
     containerId: 'content-list',
@@ -1941,8 +1961,9 @@
     container.innerHTML = clusterNames.map(function (name) {
       var groupItems = groups[name];
       var summary = clusterProgressSummary(groupItems);
+      var openAttr = collapsedContentClusters[name] ? '' : ' open';
       return (
-        '<details class="cluster-section" open>' +
+        '<details class="cluster-section" data-cluster-name="' + escapeHtml(name) + '"' + openAttr + '>' +
           '<summary class="cluster-summary">' +
             '<span>' + escapeHtml(name) + '</span>' +
             '<span class="cluster-meta">' + escapeHtml(summary) + '</span>' +
@@ -1953,6 +1974,22 @@
         '</details>'
       );
     }).join('');
+  }
+
+  // Remembers collapse state per cluster name across re-renders. The
+  // "toggle" event doesn't bubble in every browser, so this listener is
+  // registered with useCapture (see initContentInlineFields) instead of
+  // relying on normal delegation.
+  function handleClusterToggle(e) {
+    var details = e.target;
+    if (!details || !details.matches || !details.matches('details.cluster-section')) return;
+    var name = details.getAttribute('data-cluster-name');
+    if (!name) return;
+    if (details.open) {
+      delete collapsedContentClusters[name];
+    } else {
+      collapsedContentClusters[name] = true;
+    }
   }
 
   function renderContentTab() {
@@ -1978,6 +2015,16 @@
      Last updated the moment status transitions into "Refined (v2+)"). Only
      its trigger moved, from a dialog's submit event to the inline status
      <select>'s change event — the rule itself was not reimplemented. */
+  // Select/date fields commit on "change" while still focused — but
+  // renderContentTab() rebuilds the whole card list, destroying the element
+  // that fired the event and dropping keyboard focus off the page entirely.
+  // Re-find the same field on the freshly-rendered card and refocus it so a
+  // keyboard user isn't kicked out of their place after every edit.
+  function refocusContentField(id, field) {
+    var el = document.querySelector('[data-id="' + id + '"][data-field="' + field + '"]');
+    if (el) el.focus();
+  }
+
   function commitContentField(id, field, rawValue) {
     var item = state.content.find(function (c) { return c.id === id; });
     if (!item) return;
@@ -1999,6 +2046,7 @@
       // tab so all of that stays in sync (matches the old modal's save,
       // which always re-rendered the full tab too).
       renderContentTab();
+      refocusContentField(id, field);
       return;
     }
 
@@ -2017,6 +2065,7 @@
       // Both feed freshnessDate()/isStale() — re-render so the stale
       // badge/card styling and the "need refresh" count stay accurate.
       renderContentTab();
+      refocusContentField(id, field);
       return;
     }
 
@@ -2055,6 +2104,8 @@
   // container, not one listener per field.
   function initContentInlineFields() {
     var container = document.getElementById('content-list');
+
+    container.addEventListener('toggle', handleClusterToggle, true);
 
     container.addEventListener('focusout', function (e) {
       var el = e.target;
@@ -2136,39 +2187,24 @@
   }
 
   /* ---------- Content bulk cluster-tagging ---------- */
-  // Same pattern as the Keyword tab's bulk cluster action (see
-  // openKwBulkClusterDialog) — small enough to add here too given the
-  // shared selection controller already does the heavy lifting.
-
-  function openContentBulkClusterDialog() {
-    var items = contentSelection.getSelectedItems();
-    if (items.length === 0) return;
-    document.getElementById('content-bulk-cluster-desc').textContent =
-      'Sets the cluster for ' + items.length + ' selected content item' + (items.length === 1 ? '' : 's') + '.';
-    var input = document.getElementById('content-bulk-cluster-input');
-    input.value = '';
-    refreshClusterDatalists();
-    document.getElementById('content-bulk-cluster-dialog').showModal();
-    input.focus();
-  }
+  // Same pattern as the Keyword tab's bulk cluster action — both share
+  // createBulkClusterDialog (see its definition near createBulkSelection).
+  var contentBulkClusterDialog = createBulkClusterDialog({
+    dialogId: 'content-bulk-cluster-dialog',
+    descId: 'content-bulk-cluster-desc',
+    inputId: 'content-bulk-cluster-input',
+    formId: 'content-bulk-cluster-form',
+    cancelBtnId: 'content-bulk-cluster-cancel-btn',
+    getSelectedItems: function () { return contentSelection.getSelectedItems(); },
+    nounSingular: 'content item',
+    nounPlural: 'content items',
+    save: saveContent,
+    rerender: renderContentTab
+  });
 
   function initContentBulkCluster() {
-    document.getElementById('content-bulk-set-cluster-btn').addEventListener('click', openContentBulkClusterDialog);
-    document.getElementById('content-bulk-cluster-cancel-btn').addEventListener('click', function () {
-      document.getElementById('content-bulk-cluster-dialog').close();
-    });
-    document.getElementById('content-bulk-cluster-form').addEventListener('submit', function (e) {
-      e.preventDefault();
-      var input = document.getElementById('content-bulk-cluster-input');
-      var cluster = input.value.trim();
-      if (!cluster) { input.focus(); return; }
-      var items = contentSelection.getSelectedItems();
-      items.forEach(function (c) { c.cluster = cluster; });
-      saveContent();
-      document.getElementById('content-bulk-cluster-dialog').close();
-      renderContentTab();
-      showToast(items.length + ' content item' + (items.length === 1 ? '' : 's') + ' set to cluster "' + cluster + '".');
-    });
+    document.getElementById('content-bulk-set-cluster-btn').addEventListener('click', contentBulkClusterDialog.open);
+    contentBulkClusterDialog.init();
   }
 
   /* ===========================================================
@@ -2232,8 +2268,8 @@
     if (hasContent) {
       for (var j = 0; j < data.content.length; j++) {
         var c = data.content[j];
-        if (!c || typeof c !== 'object' || !c.id || !c.title) {
-          return 'Content item #' + (j + 1) + ' in this file is missing an id or title. Import cancelled so it doesn\'t corrupt your data — check the file wasn\'t edited or truncated.';
+        if (!c || typeof c !== 'object' || !c.id) {
+          return 'Content item #' + (j + 1) + ' in this file is missing an id. Import cancelled so it doesn\'t corrupt your data — check the file wasn\'t edited or truncated.';
         }
       }
     }
@@ -2326,11 +2362,17 @@
     var remainingKeywords = [];
     var removedCount = 0;
     var contentChanged = false;
+    var claimedNorms = {};
 
     state.keywords.forEach(function (k) {
       var norm = normalizePhrase(k.phrase);
       var match = norm ? contentByNormPhrase[norm] : null;
-      if (match) {
+      // Only the first keyword matching a given normalized phrase claims the
+      // content item — if two keywords share a phrase (no dupe-check on the
+      // manual Add Keyword form), later ones must not overwrite the snapshot
+      // already set from the first, or get silently removed with their data lost.
+      if (match && !claimedNorms[norm]) {
+        claimedNorms[norm] = true;
         match.sourceKeywordSnapshot = buildKeywordSnapshot(k);
         if (!match.sourceKeywordId) match.sourceKeywordId = k.id;
         contentChanged = true;
@@ -2396,7 +2438,7 @@
     initKwTableActions();
     initKwFilters();
     kwSelection.init();
-    initKwBulkCluster();
+    kwBulkClusterDialog.init();
     initDeletedPhrasesDialog();
     initCsvImport();
     initKwSelectionActions();
